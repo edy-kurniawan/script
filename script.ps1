@@ -130,6 +130,25 @@ $Report = @{
     FullDateTime = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 }
 
+# Get Computer Description
+try {
+    $computerSystem = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop
+    $Report.ComputerDescription = if ($computerSystem.Description) { 
+        $computerSystem.Description 
+    } else { 
+        "No description set" 
+    }
+    
+    # Additional computer info
+    $Report.Domain = if ($computerSystem.Domain) { $computerSystem.Domain } else { "WORKGROUP" }
+    $Report.Manufacturer = $computerSystem.Manufacturer
+    $Report.Model = $computerSystem.Model
+    $Report.SystemType = $computerSystem.SystemType
+} catch {
+    $Report.ComputerDescription = "Failed to retrieve: $($_.Exception.Message)"
+    Write-Host "[WARNING] Could not retrieve computer description" -ForegroundColor Yellow
+}
+
 # ===================================================
 # 1. HEALTH CHECK (Disk, Battery, CPU Temp, RAM)
 # ===================================================
