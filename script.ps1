@@ -1073,8 +1073,21 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         # Convert report ke JSON
         $jsonBody = $Report | ConvertTo-Json -Depth 10 -Compress
         
-        # Kirim POST request ke API
-        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -ContentType "application/json" -TimeoutSec ([int]$Config.API_TIMEOUT)
+        # Setup headers dengan API Key
+        $headers = @{
+            "Content-Type" = "application/json"
+        }
+        
+        # Tambahkan API Key jika ada di config
+        if ($Config.API_KEY) {
+            $headers["X-API-Key"] = $Config.API_KEY
+            Write-Host "[AUTH] Using API Key for authentication" -ForegroundColor Gray
+        } else {
+            Write-Host "[WARNING] No API Key configured - request may be rejected" -ForegroundColor Yellow
+        }
+        
+        # Kirim POST request ke API dengan headers
+        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
         
         if ($response.success) {
             Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
