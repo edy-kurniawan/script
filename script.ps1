@@ -131,124 +131,7 @@ $Report = @{
 }
 
 # ===================================================
-# 1. DETEKSI & SCAN ANTIVIRUS (ASYNC - Background Job)
-# ===================================================
-# Prioritas scan: Defender > Avira > Smadav (hanya jalankan 1 AV saja)
-
-$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
-
-# Pilih hanya 1 antivirus berdasarkan prioritas
-$SelectedAV = $null
-$priorityList = @("Windows Defender", "Microsoft Defender", "Avira", "Smadav")
-
-if ($AllAV) {
-    # Tampilkan semua AV yang terdeteksi
-    $avNames = ($AllAV | ForEach-Object { $_.displayName }) -join ", "
-    Write-Host "[INFO] Antivirus detected: $avNames" -ForegroundColor Cyan
-    
-    # Pilih AV berdasarkan prioritas
-    foreach ($priority in $priorityList) {
-        $SelectedAV = $AllAV | Where-Object { $_.displayName -match $priority } | Select-Object -First 1
-        if ($SelectedAV) {
-            Write-Host "[SCAN] Selected for quick scan: $($SelectedAV.displayName)" -ForegroundColor Green
-            break
-        }
-    }
-    
-    # Jika tidak ada di prioritas, ambil yang pertama
-    if (-not $SelectedAV) {
-        $SelectedAV = $AllAV | Select-Object -First 1
-        Write-Host "[INFO] Using first available AV: $($SelectedAV.displayName)" -ForegroundColor Yellow
-    }
-}
-
-# Jalankan quick scan pada 1 antivirus terpilih
-if ($SelectedAV) {
-    $Report.Antivirus = $SelectedAV.displayName
-    $Report.AllAntivirus = $avNames
-    
-    $avScanJob = Start-Job -ScriptBlock {
-        param($displayName, $osVersion)
-        
-        $result = @{}
-        $result.AVInstalled = $true
-        $result.AVName = $displayName
-        $result.AVScanResult = "Quick scan started in background for: $displayName"
-
-        switch -Regex ($displayName) {
-            "Windows Defender|Microsoft Defender" {
-                try {
-                    # Gunakan MpCmdRun.exe untuk Quick Scan
-                    $mpCmd = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
-                    if (-not (Test-Path $mpCmd)) {
-                        $mpCmd = "${env:ProgramFiles(x86)}\Windows Defender\MpCmdRun.exe"
-                    }
-                    if (Test-Path $mpCmd) {
-                        Start-Process -FilePath $mpCmd -ArgumentList "-Scan", "-ScanType", "1" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "[OK] Defender quick scan completed"
-                    } else {
-                        $result.AVScanResult = "[WARNING] Defender engine not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "[ERROR] Defender quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            "Avira" {
-                try {
-                    # Avira Quick Scan
-                    $cmd = "C:\\Program Files (x86)\\Avira\\Antivirus\\avguard.exe"
-                    $cmdCLI = "C:\\Program Files (x86)\\Avira\\Antivirus\\avscan.exe"
-                    
-                    if (Test-Path $cmdCLI) {
-                        Start-Process -FilePath $cmdCLI -ArgumentList "/GUIMODE=2", "/QUICKSCAN" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "[OK] Avira quick scan completed"
-                    } else {
-                        $result.AVScanResult = "[WARNING] Avira scanner not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "[ERROR] Avira quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            "Smadav" {
-                try {
-                    $cmd = "C:\\Program Files\\Smadav\\Smadav.exe"
-                    if (-not (Test-Path $cmd)) {
-                        $cmd = "C:\\Program Files (x86)\\Smadav\\Smadav.exe"
-                    }
-                    if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "/scan", "/auto-delete" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "[OK] Smadav quick scan completed"
-                    } else {
-                        $result.AVScanResult = "[WARNING] Smadav executable not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "[ERROR] Smadav quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            default {
-                $result.AVScanResult = "[INFO] Quick scan not configured for: $displayName (scan skipped)"
-            }
-        }
-        
-        return $result
-    } -ArgumentList $SelectedAV.displayName, $osVersion
-    
-    $BackgroundJobs += @{
-        Name = "AVScan"
-        Job = $avScanJob
-        Type = "AV"
-    }
-} else {
-    $Report.Antivirus = "Not detected"
-    $Report.AVScanResult = "SKIPPED - No antivirus found"
-    Write-Host "[WARNING] No antivirus detected" -ForegroundColor Yellow
-}
-
-# ===================================================
-# 2. HEALTH CHECK (Disk, Battery, CPU Temp, RAM)
+# 1. HEALTH CHECK (Disk, Battery, CPU Temp, RAM)
 # ===================================================
 
 # --- Disk Space ---
@@ -465,7 +348,138 @@ try {
 }
 
 # ===================================================
-# 4. BERSIHKAN CACHE BROWSER (ASYNC - Background Job)
+# 4. SCAN DAFTAR USER ACCOUNTS
+# ===================================================
+
+Write-Host "`n[SCAN] Collecting Windows user accounts..." -ForegroundColor Cyan
+
+try {
+    $userAccounts = @()
+    
+    # Try Get-LocalUser (Windows 8+)
+    try {
+        $localUsers = Get-LocalUser -ErrorAction Stop
+        
+        foreach ($user in $localUsers) {
+            $userAccounts += [PSCustomObject]@{
+                Username = $user.Name
+                FullName = $user.FullName
+                Enabled = $user.Enabled
+                PasswordLastSet = if($user.PasswordLastSet) { $user.PasswordLastSet.ToString("yyyy-MM-dd HH:mm:ss") } else { "Never" }
+                PasswordExpires = if($user.PasswordExpires) { $user.PasswordExpires.ToString("yyyy-MM-dd") } else { "Never" }
+                LastLogon = if($user.LastLogon) { $user.LastLogon.ToString("yyyy-MM-dd HH:mm:ss") } else { "Never" }
+                AccountExpires = if($user.AccountExpires) { $user.AccountExpires.ToString("yyyy-MM-dd") } else { "Never" }
+                Description = $user.Description
+                SID = $user.SID.Value
+                PasswordRequired = $user.PasswordRequired
+                UserMayChangePassword = $user.UserMayChangePassword
+            }
+        }
+        
+        Write-Host "[OK] Found $($userAccounts.Count) user accounts (Get-LocalUser)" -ForegroundColor Green
+        
+    } catch {
+        # Fallback to WMI (Windows 7 compatible)
+        Write-Host "[INFO] Using WMI fallback for user accounts..." -ForegroundColor Yellow
+        
+        $wmiUsers = Get-WmiObject -Class Win32_UserAccount -Filter "LocalAccount=True" -ErrorAction Stop
+        
+        foreach ($user in $wmiUsers) {
+            # Get additional info from Win32_UserProfile
+            $profile = Get-WmiObject -Class Win32_UserProfile -Filter "SID='$($user.SID)'" -ErrorAction SilentlyContinue
+            
+            $userAccounts += [PSCustomObject]@{
+                Username = $user.Name
+                FullName = $user.FullName
+                Enabled = -not $user.Disabled
+                PasswordLastSet = "Not Available (WMI)"
+                PasswordExpires = if($user.PasswordExpires) { "Expires" } else { "Never" }
+                LastLogon = "Not Available (WMI)"
+                AccountExpires = "Not Available (WMI)"
+                Description = $user.Description
+                SID = $user.SID
+                PasswordRequired = $user.PasswordRequired
+                UserMayChangePassword = $user.PasswordChangeable
+                Domain = $user.Domain
+                AccountType = switch ($user.AccountType) {
+                    256 { "Temporary Duplicate Account" }
+                    512 { "Normal Account" }
+                    2048 { "Interdomain Trust Account" }
+                    4096 { "Workstation Trust Account" }
+                    8192 { "Server Trust Account" }
+                    default { "Unknown ($($user.AccountType))" }
+                }
+            }
+        }
+        
+        Write-Host "[OK] Found $($userAccounts.Count) user accounts (WMI)" -ForegroundColor Green
+    }
+    
+    # Detect Administrator accounts
+    try {
+        $adminGroupSID = "S-1-5-32-544" # Built-in Administrators group
+        $adminGroup = Get-WmiObject -Class Win32_Group -Filter "SID='$adminGroupSID'" -ErrorAction SilentlyContinue
+        
+        if ($adminGroup) {
+            $adminMembers = Get-WmiObject -Query "ASSOCIATORS OF {Win32_Group.Domain='$($adminGroup.Domain)',Name='$($adminGroup.Name)'} WHERE Role=GroupComponent" -ErrorAction SilentlyContinue
+            $adminUsernames = $adminMembers | Where-Object { $_.Caption } | ForEach-Object { ($_.Caption -split '\\')[-1] }
+            
+            # Mark admin users
+            foreach ($user in $userAccounts) {
+                $user | Add-Member -NotePropertyName "IsAdministrator" -NotePropertyValue ($adminUsernames -contains $user.Username) -Force
+            }
+        }
+    } catch {
+        # Jika gagal detect admin, set semua ke false
+        foreach ($user in $userAccounts) {
+            $user | Add-Member -NotePropertyName "IsAdministrator" -NotePropertyValue $false -Force
+        }
+    }
+    
+    # Get current logged in users
+    try {
+        $loggedInUsers = @()
+        $sessions = quser 2>$null | Select-Object -Skip 1
+        
+        foreach ($session in $sessions) {
+            if ($session -match '^\s*(\S+)\s+(\S*)\s+(\d+)\s+(\S+)\s+(.+)$') {
+                $loggedInUsers += $matches[1].Trim()
+            }
+        }
+        
+        # Mark currently logged in users
+        foreach ($user in $userAccounts) {
+            $user | Add-Member -NotePropertyName "CurrentlyLoggedIn" -NotePropertyValue ($loggedInUsers -contains $user.Username) -Force
+        }
+    } catch {
+        # If quser fails, set all to false
+        foreach ($user in $userAccounts) {
+            $user | Add-Member -NotePropertyName "CurrentlyLoggedIn" -NotePropertyValue $false -Force
+        }
+    }
+    
+    $Report.WindowsUsers = $userAccounts
+    $Report.UsersSummary = @{
+        TotalUsers = $userAccounts.Count
+        EnabledUsers = ($userAccounts | Where-Object { $_.Enabled }).Count
+        DisabledUsers = ($userAccounts | Where-Object { -not $_.Enabled }).Count
+        AdminUsers = ($userAccounts | Where-Object { $_.IsAdministrator }).Count
+        LoggedInUsers = ($userAccounts | Where-Object { $_.CurrentlyLoggedIn }).Count
+        UsersWithPasswordExpiry = ($userAccounts | Where-Object { $_.PasswordExpires -ne "Never" }).Count
+    }
+    
+    Write-Host "[SUMMARY] Total: $($Report.UsersSummary.TotalUsers) | Enabled: $($Report.UsersSummary.EnabledUsers) | Admins: $($Report.UsersSummary.AdminUsers) | Logged In: $($Report.UsersSummary.LoggedInUsers)" -ForegroundColor Cyan
+    
+} catch {
+    Write-Host "[ERROR] Failed to collect user accounts: $($_.Exception.Message)" -ForegroundColor Red
+    $Report.WindowsUsers = "Failed to collect user accounts"
+    $Report.UsersSummary = @{
+        Error = $_.Exception.Message
+    }
+}
+
+# ===================================================
+# 5. BERSIHKAN CACHE BROWSER (ASYNC - Background Job)
 # ===================================================
 
 $browserCleanJob = Start-Job -ScriptBlock {
@@ -577,24 +591,43 @@ $diskCleanJob = Start-Job -ScriptBlock {
             HasTrash = $totalItems -gt 0
         }
         
-        # --- Alert jika ada sampah di Recycle Bin ---
+        # --- Alert jika ada sampah di Recycle Bin (tunggu konfirmasi user) ---
         if ($totalItems -gt 0) {
             $report.RecycleBin.Alert = "[WARNING] Found $totalItems file(s) in Recycle Bin ($totalSizeMB MB)"
             $report.RecycleBin.Recommendation = "Consider emptying Recycle Bin to free up $($totalSizeGB) GB of disk space"
             
-            # Tampilkan notifikasi di console
+            # Tampilkan MessageBox yang memerlukan konfirmasi user
             Add-Type -AssemblyName System.Windows.Forms
-            $notification = New-Object System.Windows.Forms.NotifyIcon
-            $notification.Icon = [System.Drawing.SystemIcons]::Information
-            $notification.BalloonTipIcon = 'Warning'
-            $notification.BalloonTipTitle = "Recycle Bin Alert"
-            $notification.BalloonTipText = "Found $totalItems unused file(s) ($totalSizeGB GB). Consider deleting to free up disk space."
-            $notification.Visible = $true
-            $notification.ShowBalloonTip(5000)
+            Add-Type -AssemblyName PresentationFramework
             
-            # Cleanup notification after display
-            Start-Sleep -Seconds 6
-            $notification.Dispose()
+            $message = "Recycle Bin contains $totalItems unused file(s)`n`n" +
+                       "Total Size: $totalSizeMB MB ($totalSizeGB GB)`n`n" +
+                       "Do you want to empty the Recycle Bin now to free up disk space?"
+            
+            $result = [System.Windows.MessageBox]::Show(
+                $message,
+                "Recycle Bin Alert - Action Required",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            
+            # Simpan user response
+            $report.RecycleBin.UserAction = if ($result -eq 'Yes') { 
+                "User confirmed to empty Recycle Bin" 
+                
+                # Empty Recycle Bin jika user pilih Yes
+                try {
+                    $recycleBin.Items() | ForEach-Object { Remove-Item $_.Path -Recurse -Force -ErrorAction SilentlyContinue }
+                    $report.RecycleBin.Emptied = $true
+                    $report.RecycleBin.EmptyResult = "Successfully emptied Recycle Bin"
+                } catch {
+                    $report.RecycleBin.Emptied = $false
+                    $report.RecycleBin.EmptyResult = "Failed to empty: $($_.Exception.Message)"
+                }
+            } else { 
+                "User declined to empty Recycle Bin"
+                $report.RecycleBin.Emptied = $false
+            }
         } else {
             $report.RecycleBin.Alert = "[OK] Recycle Bin is empty"
         }
@@ -775,17 +808,144 @@ $BackgroundJobs += @{
 }
 
 # ===================================================
-# 7. TUNGGU SEMUA BACKGROUND JOBS SELESAI
+# 7. DETEKSI & SCAN ANTIVIRUS (ASYNC - Background Job)
+# ===================================================
+# Prioritas scan: Defender > Avira > Smadav (hanya jalankan 1 AV saja)
+# Dijalankan paling akhir untuk menghindari timeout pada job lain
+
+Write-Host "\n[ANTIVIRUS] Detecting and scanning antivirus..." -ForegroundColor Cyan
+
+$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+
+# Pilih hanya 1 antivirus berdasarkan prioritas
+$SelectedAV = $null
+$priorityList = @("Windows Defender", "Microsoft Defender", "Avira", "Smadav")
+
+if ($AllAV) {
+    # Tampilkan semua AV yang terdeteksi
+    $avNames = ($AllAV | ForEach-Object { $_.displayName }) -join ", "
+    Write-Host "[INFO] Antivirus detected: $avNames" -ForegroundColor Cyan
+    
+    # Pilih AV berdasarkan prioritas
+    foreach ($priority in $priorityList) {
+        $SelectedAV = $AllAV | Where-Object { $_.displayName -match $priority } | Select-Object -First 1
+        if ($SelectedAV) {
+            Write-Host "[SCAN] Selected for quick scan: $($SelectedAV.displayName)" -ForegroundColor Green
+            break
+        }
+    }
+    
+    # Jika tidak ada di prioritas, ambil yang pertama
+    if (-not $SelectedAV) {
+        $SelectedAV = $AllAV | Select-Object -First 1
+        Write-Host "[INFO] Using first available AV: $($SelectedAV.displayName)" -ForegroundColor Yellow
+    }
+}
+
+# Jalankan quick scan pada 1 antivirus terpilih
+if ($SelectedAV) {
+    $Report.Antivirus = $SelectedAV.displayName
+    $Report.AllAntivirus = $avNames
+    
+    $avScanJob = Start-Job -ScriptBlock {
+        param($displayName, $osVersion)
+        
+        $result = @{}
+        $result.AVInstalled = $true
+        $result.AVName = $displayName
+        $result.AVScanResult = "Quick scan started in background for: $displayName"
+
+        switch -Regex ($displayName) {
+            "Windows Defender|Microsoft Defender" {
+                try {
+                    # Gunakan MpCmdRun.exe untuk Quick Scan
+                    $mpCmd = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+                    if (-not (Test-Path $mpCmd)) {
+                        $mpCmd = "${env:ProgramFiles(x86)}\Windows Defender\MpCmdRun.exe"
+                    }
+                    if (Test-Path $mpCmd) {
+                        Start-Process -FilePath $mpCmd -ArgumentList "-Scan", "-ScanType", "1" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Defender quick scan completed"
+                    } else {
+                        $result.AVScanResult = "[WARNING] Defender engine not found"
+                    }
+                } catch {
+                    $result.AVScanResult = "[ERROR] Defender quick scan failed: $($_.Exception.Message)"
+                }
+            }
+
+            "Avira" {
+                try {
+                    # Avira Quick Scan
+                    $cmd = "C:\\Program Files (x86)\\Avira\\Antivirus\\avguard.exe"
+                    $cmdCLI = "C:\\Program Files (x86)\\Avira\\Antivirus\\avscan.exe"
+                    
+                    if (Test-Path $cmdCLI) {
+                        Start-Process -FilePath $cmdCLI -ArgumentList "/GUIMODE=2", "/QUICKSCAN" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Avira quick scan completed"
+                    } else {
+                        $result.AVScanResult = "[WARNING] Avira scanner not found"
+                    }
+                } catch {
+                    $result.AVScanResult = "[ERROR] Avira quick scan failed: $($_.Exception.Message)"
+                }
+            }
+
+            "Smadav" {
+                try {
+                    $cmd = "C:\\Program Files\\Smadav\\Smadav.exe"
+                    if (-not (Test-Path $cmd)) {
+                        $cmd = "C:\\Program Files (x86)\\Smadav\\Smadav.exe"
+                    }
+                    if (Test-Path $cmd) {
+                        Start-Process -FilePath $cmd -ArgumentList "/scan", "/auto-delete" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Smadav quick scan completed"
+                    } else {
+                        $result.AVScanResult = "[WARNING] Smadav executable not found"
+                    }
+                } catch {
+                    $result.AVScanResult = "[ERROR] Smadav quick scan failed: $($_.Exception.Message)"
+                }
+            }
+
+            default {
+                $result.AVScanResult = "[INFO] Quick scan not configured for: $displayName (scan skipped)"
+            }
+        }
+        
+        return $result
+    } -ArgumentList $SelectedAV.displayName, $osVersion
+    
+    $BackgroundJobs += @{
+        Name = "AVScan"
+        Job = $avScanJob
+        Type = "AV"
+    }
+} else {
+    $Report.Antivirus = "Not detected"
+    $Report.AVScanResult = "SKIPPED - No antivirus found"
+    Write-Host "[WARNING] No antivirus detected" -ForegroundColor Yellow
+}
+
+# ===================================================
+# 8. TUNGGU SEMUA BACKGROUND JOBS SELESAI
 # ===================================================
 
 Write-Host "`n[WAITING] Semua processes berjalan di background..." -ForegroundColor Cyan
 Write-Host "[INFO] Antivirus scan: max 5 menit" -ForegroundColor Gray
-Write-Host "[INFO] Browser cleanup: ~30 detik" -ForegroundColor Gray
-Write-Host "[INFO] Disk cleanup: ~1 menit" -ForegroundColor Gray
-Write-Host "[INFO] App analysis: ~30 detik" -ForegroundColor Gray
+Write-Host "[INFO] Browser cleanup: max 2 menit" -ForegroundColor Gray
+Write-Host "[INFO] Disk cleanup: max 2 menit" -ForegroundColor Gray
+Write-Host "[INFO] App analysis: max 3 menit" -ForegroundColor Gray
 
-# Tunggu semua jobs dengan timeout
-$maxWaitTime = 600 # 10 menit total timeout
+# Timeout per job type (dalam detik)
+$jobTimeouts = @{
+    "AV" = 300              # 5 menit untuk antivirus scan
+    "BrowserCache" = 120    # 2 menit untuk browser cleanup
+    "DiskCleanup" = 120     # 2 menit untuk disk cleanup
+    "DiskHealth_HDS" = 180  # 3 menit untuk Hard Disk Sentinel
+    "Applications" = 180    # 3 menit untuk app analysis
+}
+
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 foreach ($job in $BackgroundJobs) {
@@ -796,48 +956,103 @@ foreach ($job in $BackgroundJobs) {
             continue
         }
         
-        $remaining = $maxWaitTime - [int]$stopwatch.Elapsed.TotalSeconds
-        if ($remaining -gt 0) {
-            Write-Host "`n[$($job.Type)] Waiting for $($job.Name)..." -ForegroundColor Yellow
-            $result = $job.Job | Wait-Job -Timeout $remaining | Receive-Job -Wait -AutoRemoveJob
+        # Get timeout untuk job type ini (default 180 detik jika tidak ada)
+        $timeoutSeconds = if ($jobTimeouts.ContainsKey($job.Type)) { 
+            $jobTimeouts[$job.Type] 
+        } else { 
+            180 
+        }
+        
+        Write-Host "`n[$($job.Type)] Waiting for $($job.Name) (timeout: $timeoutSeconds sec)..." -ForegroundColor Yellow
+        
+        # Wait dengan timeout per job
+        $jobStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $completed = Wait-Job -Job $job.Job -Timeout $timeoutSeconds
+        $jobStopwatch.Stop()
+        
+        if ($completed) {
+            # Job selesai dalam timeout
+            $result = Receive-Job -Job $job.Job -Wait -AutoRemoveJob
+            $elapsed = [int]$jobStopwatch.Elapsed.TotalSeconds
+            Write-Host "[$($job.Type)] Completed in $elapsed seconds" -ForegroundColor Green
             
+            # Map hasil ke report
             if ($job.Type -eq "AV") {
                 if ($result -is [hashtable]) {
                     $Report.AVScanResult = $result.AVScanResult
+                    $Report.AVName = $result.AVName
+                } else {
+                    $Report.AVScanResult = "Scan completed but no result returned"
                 }
             } elseif ($job.Type -eq "BrowserCache") {
                 if ($result -is [hashtable]) {
                     $Report.BrowserCacheCleared = $result
+                } else {
+                    $Report.BrowserCacheCleared = "Cleanup completed"
                 }
             } elseif ($job.Type -eq "DiskCleanup") {
                 if ($result -is [hashtable]) {
                     $Report.RecycleBin = $result.RecycleBin
                     $Report.DiskCleanup = $result.DiskCleanup
+                    
+                    # Tampilkan alert recycle bin jika ada
+                    if ($result.RecycleBin.Alert) {
+                        Write-Host "  $($result.RecycleBin.Alert)" -ForegroundColor $(if($result.RecycleBin.HasTrash){"Yellow"}else{"Green"})
+                    }
+                } else {
+                    $Report.RecycleBin = "Check completed"
+                    $Report.DiskCleanup = "Cleanup completed"
                 }
             } elseif ($job.Type -eq "DiskHealth_HDS") {
                 if ($result -is [hashtable]) {
                     $Report.DiskHealth_HDSentinel = $result
+                } else {
+                    $Report.DiskHealth_HDSentinel = "Check completed"
                 }
             } elseif ($job.Type -eq "Applications") {
                 if ($result) {
                     $Report.ApplicationAnalysis = $result
+                } else {
+                    $Report.ApplicationAnalysis = "Analysis completed"
                 }
             }
         } else {
-            Write-Host "`n[$($job.Type)] TIMEOUT - $($job.Name) took too long" -ForegroundColor Red
-            Stop-Job $job.Job
-            Remove-Job $job.Job
+            # Job timeout
+            Write-Host "[$($job.Type)] TIMEOUT after $timeoutSeconds seconds - forcing stop" -ForegroundColor Red
+            Stop-Job -Job $job.Job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job.Job -Force -ErrorAction SilentlyContinue
+            
+            # Set status timeout di report
+            if ($job.Type -eq "AV") {
+                $Report.AVScanResult = "TIMEOUT - Scan took too long (>$timeoutSeconds sec)"
+            } elseif ($job.Type -eq "BrowserCache") {
+                $Report.BrowserCacheCleared = "TIMEOUT - Cleanup incomplete"
+            } elseif ($job.Type -eq "DiskCleanup") {
+                $Report.RecycleBin = "TIMEOUT - Check incomplete"
+                $Report.DiskCleanup = "TIMEOUT - Cleanup incomplete"
+            } elseif ($job.Type -eq "DiskHealth_HDS") {
+                $Report.DiskHealth_HDSentinel = "TIMEOUT - Check incomplete"
+            } elseif ($job.Type -eq "Applications") {
+                $Report.ApplicationAnalysis = "TIMEOUT - Analysis incomplete"
+            }
         }
     } catch {
         Write-Host "`n[$($job.Type)] ERROR: $($_.Exception.Message)" -ForegroundColor Red
+        
+        # Cleanup on error
+        if ($job.Job) {
+            Stop-Job -Job $job.Job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job.Job -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
 $stopwatch.Stop()
-Write-Host "`n[OK] All background jobs completed in $([int]$stopwatch.Elapsed.TotalSeconds) seconds" -ForegroundColor Green
+$totalTime = [int]$stopwatch.Elapsed.TotalSeconds
+Write-Host "`n[OK] All background jobs processed in $totalTime seconds" -ForegroundColor Green
 
 # ===================================================
-# 8. KIRIM REPORT KE DATABASE BACKEND
+# 9. KIRIM REPORT KE DATABASE BACKEND
 # ===================================================
 
 # Kirim Report langsung ke Database Backend API (tanpa simpan file lokal)
