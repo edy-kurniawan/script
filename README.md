@@ -11,7 +11,7 @@
 
 ### 1. Download/Clone Script
 ```powershell
-# Clone repository atau copy semua file ke C:\laragon\www\Scripts\script
+# Clone repository atau copy semua file ke C:\script
 ```
 
 ### 2. Jalankan Create Task Scheduler
@@ -23,7 +23,7 @@
 # (Klik kanan Start Menu → Windows PowerShell (Admin))
 
 # Masuk ke folder script
-cd C:\laragon\www\Scripts\script
+cd C:\script
 
 # Jalankan script untuk membuat scheduled task
 .\create-sync-task.ps1
@@ -56,7 +56,7 @@ At 12:00 PM on day 1, 2, 3, 4, 5, 6, and 7 of every month
 Start-ScheduledTask -TaskName "Maintenance Script Monthly Sync"
 
 # Cek log hasil eksekusi
-Get-Content C:\Script\Logs\sync_*.log -Tail 50
+Get-Content C:\script\Logs\sync_*.log -Tail 50
 ```
 
 ## Cara Kerja
@@ -65,12 +65,12 @@ Get-Content C:\Script\Logs\sync_*.log -Tail 50
 2. **Wrapper Script** (`sync-cloud-wrapper.ps1`) cek apakah sudah sukses bulan ini
 3. Jika belum sukses → jalankan `sync-cloud.ps1`
 4. Jika sudah sukses → skip dan tunggu bulan depan
-5. **Flag file** disimpan di `C:\Script\Flags\sync_success_YYYY_MM.flag`
+5. **Flag file** disimpan di `C:\script\Flags\sync_success_YYYY_MM.flag`
 
 ## Folder Structure Setelah Install
 
 ```
-C:\Script\
+C:\script\
 ├── sync-cloud.ps1              # Script utama (di-sync dari cloud)
 ├── sync-cloud-wrapper.ps1      # Wrapper dengan monthly check logic
 ├── Logs\                        # Log file eksekusi
@@ -105,21 +105,21 @@ Unregister-ScheduledTask -TaskName "Maintenance Script Monthly Sync" -Confirm:$f
 
 ### Cek apakah task sudah jalan bulan ini
 ```powershell
-Get-Content C:\Script\Flags\sync_success_*.flag
+Get-Content C:\script\Flags\sync_success_*.flag
 ```
 
 ### Lihat log eksekusi
 ```powershell
 # Log terbaru
-Get-Content C:\Script\Logs\sync_*.log | Select-Object -Last 100
+Get-Content C:\script\Logs\sync_*.log | Select-Object -Last 100
 
 # Semua log
-Get-ChildItem C:\Script\Logs\sync_*.log | Sort-Object LastWriteTime
+Get-ChildItem C:\script\Logs\sync_*.log | Sort-Object LastWriteTime
 ```
 
 ### Force run ulang bulan ini (hapus flag)
 ```powershell
-Remove-Item C:\Script\Flags\sync_success_*.flag -Force
+Remove-Item C:\script\Flags\sync_success_*.flag -Force
 Start-ScheduledTask -TaskName "Maintenance Script Monthly Sync"
 ```
 
@@ -130,6 +130,6 @@ Start-ScheduledTask -TaskName "Maintenance Script Monthly Sync"
 Unregister-ScheduledTask -TaskName "Maintenance Script Monthly Sync" -Confirm:$false
 
 # Hapus file (opsional)
-Remove-Item C:\Script -Recurse -Force
+Remove-Item C:\script -Recurse -Force
 ``` 
 
