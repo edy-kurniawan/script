@@ -133,116 +133,108 @@ $Report = @{
 # ===================================================
 # 1. DETEKSI & SCAN ANTIVIRUS (ASYNC - Background Job)
 # ===================================================
+# Prioritas scan: Defender > Avira > Smadav (hanya jalankan 1 AV saja)
 
-$AV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
 
-# Jalankan quick scan antivirus di background (tidak blocking script utama)
-if ($AV) {
-    $Report.Antivirus = $AV.displayName
+# Pilih hanya 1 antivirus berdasarkan prioritas
+$SelectedAV = $null
+$priorityList = @("Windows Defender", "Microsoft Defender", "Avira", "Smadav")
+
+if ($AllAV) {
+    # Tampilkan semua AV yang terdeteksi
+    $avNames = ($AllAV | ForEach-Object { $_.displayName }) -join ", "
+    Write-Host "[INFO] Antivirus detected: $avNames" -ForegroundColor Cyan
+    
+    # Pilih AV berdasarkan prioritas
+    foreach ($priority in $priorityList) {
+        $SelectedAV = $AllAV | Where-Object { $_.displayName -match $priority } | Select-Object -First 1
+        if ($SelectedAV) {
+            Write-Host "[SCAN] Selected for quick scan: $($SelectedAV.displayName)" -ForegroundColor Green
+            break
+        }
+    }
+    
+    # Jika tidak ada di prioritas, ambil yang pertama
+    if (-not $SelectedAV) {
+        $SelectedAV = $AllAV | Select-Object -First 1
+        Write-Host "[INFO] Using first available AV: $($SelectedAV.displayName)" -ForegroundColor Yellow
+    }
+}
+
+# Jalankan quick scan pada 1 antivirus terpilih
+if ($SelectedAV) {
+    $Report.Antivirus = $SelectedAV.displayName
+    $Report.AllAntivirus = $avNames
     
     $avScanJob = Start-Job -ScriptBlock {
         param($displayName, $osVersion)
         
         $result = @{}
         $result.AVInstalled = $true
+        $result.AVName = $displayName
         $result.AVScanResult = "Quick scan started in background for: $displayName"
 
         switch -Regex ($displayName) {
             "Windows Defender|Microsoft Defender" {
                 try {
-                    # Gunakan MpCmdRun.exe untuk Quick Scan, jalan di proses terpisah
+                    # Gunakan MpCmdRun.exe untuk Quick Scan
                     $mpCmd = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
                     if (-not (Test-Path $mpCmd)) {
-                        $mpCmd = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" # fallback
+                        $mpCmd = "${env:ProgramFiles(x86)}\Windows Defender\MpCmdRun.exe"
                     }
                     if (Test-Path $mpCmd) {
-                        Start-Process -FilePath $mpCmd -ArgumentList "-Scan", "-ScanType", "1" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "Defender quick scan started (background)"
+                        Start-Process -FilePath $mpCmd -ArgumentList "-Scan", "-ScanType", "1" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Defender quick scan completed"
                     } else {
-                        $result.AVScanResult = "Defender engine not found, status only"
+                        $result.AVScanResult = "[WARNING] Defender engine not found"
                     }
                 } catch {
-                    $result.AVScanResult = "Defender quick scan failed: $($_.Exception.Message)"
+                    $result.AVScanResult = "[ERROR] Defender quick scan failed: $($_.Exception.Message)"
                 }
             }
 
-            "Avast" {
+            "Avira" {
                 try {
-                    $cmd = "C:\\Program Files\\AVAST Software\\Avast\\ashCmd.exe"
-                    if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "/Quick", "/DeleteInfected" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "Avast quick scan started (background)"
+                    # Avira Quick Scan
+                    $cmd = "C:\\Program Files (x86)\\Avira\\Antivirus\\avguard.exe"
+                    $cmdCLI = "C:\\Program Files (x86)\\Avira\\Antivirus\\avscan.exe"
+                    
+                    if (Test-Path $cmdCLI) {
+                        Start-Process -FilePath $cmdCLI -ArgumentList "/GUIMODE=2", "/QUICKSCAN" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Avira quick scan completed"
                     } else {
-                        $result.AVScanResult = "Avast executable not found"
+                        $result.AVScanResult = "[WARNING] Avira scanner not found"
                     }
                 } catch {
-                    $result.AVScanResult = "Avast quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            "AVG" {
-                try {
-                    $cmd = "C:\\Program Files\\AVG\\Antivirus\\avgscan.exe"
-                    if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "/scan=quick", "/repair" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "AVG quick scan started (background)"
-                    } else {
-                        $result.AVScanResult = "AVG executable not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "AVG quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            "Kaspersky" {
-                try {
-                    $cmd = "C:\\Program Files (x86)\\Kaspersky Lab\\Kaspersky Anti-Virus\\avp.com"
-                    if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "SCAN", "/i0", "/DISINFECT" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "Kaspersky quick scan started (background)"
-                    } else {
-                        $result.AVScanResult = "Kaspersky executable not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "Kaspersky quick scan failed: $($_.Exception.Message)"
-                }
-            }
-
-            "ESET" {
-                try {
-                    $cmd = "C:\\Program Files\\ESET\\ESET Security\\ecls.exe"
-                    if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "--smart-optimize", "--clean-mode=strict" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "ESET smart/quick scan started (background)"
-                    } else {
-                        $result.AVScanResult = "ESET executable not found"
-                    }
-                } catch {
-                    $result.AVScanResult = "ESET quick scan failed: $($_.Exception.Message)"
+                    $result.AVScanResult = "[ERROR] Avira quick scan failed: $($_.Exception.Message)"
                 }
             }
 
             "Smadav" {
                 try {
                     $cmd = "C:\\Program Files\\Smadav\\Smadav.exe"
+                    if (-not (Test-Path $cmd)) {
+                        $cmd = "C:\\Program Files (x86)\\Smadav\\Smadav.exe"
+                    }
                     if (Test-Path $cmd) {
-                        Start-Process -FilePath $cmd -ArgumentList "/scan", "/auto-delete" -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        $result.AVScanResult = "Smadav quick scan started (background)"
+                        Start-Process -FilePath $cmd -ArgumentList "/scan", "/auto-delete" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+                        $result.AVScanResult = "[OK] Smadav quick scan completed"
                     } else {
-                        $result.AVScanResult = "Smadav executable not found"
+                        $result.AVScanResult = "[WARNING] Smadav executable not found"
                     }
                 } catch {
-                    $result.AVScanResult = "Smadav quick scan failed: $($_.Exception.Message)"
+                    $result.AVScanResult = "[ERROR] Smadav quick scan failed: $($_.Exception.Message)"
                 }
             }
 
             default {
-                $result.AVScanResult = "Quick scan not configured for AV: $displayName"
+                $result.AVScanResult = "[INFO] Quick scan not configured for: $displayName (scan skipped)"
             }
         }
         
         return $result
-    } -ArgumentList $AV.displayName, $osVersion
+    } -ArgumentList $SelectedAV.displayName, $osVersion
     
     $BackgroundJobs += @{
         Name = "AVScan"
@@ -251,7 +243,8 @@ if ($AV) {
     }
 } else {
     $Report.Antivirus = "Not detected"
-    $Report.AVScanResult = "SKIPPED"
+    $Report.AVScanResult = "SKIPPED - No antivirus found"
+    Write-Host "[WARNING] No antivirus detected" -ForegroundColor Yellow
 }
 
 # ===================================================
@@ -557,7 +550,7 @@ $diskCleanJob = Start-Job -ScriptBlock {
     $report = @{}
     
     try {
-        # --- Quick Recycle Bin check (no deletion) ---
+        # --- Quick Recycle Bin check ---
         $shell = New-Object -ComObject Shell.Application
         $recycleBin = $shell.Namespace(10)
         
@@ -581,6 +574,29 @@ $diskCleanJob = Start-Job -ScriptBlock {
             TotalFiles = $totalItems
             TotalSizeMB = $totalSizeMB
             TotalSizeGB = $totalSizeGB
+            HasTrash = $totalItems -gt 0
+        }
+        
+        # --- Alert jika ada sampah di Recycle Bin ---
+        if ($totalItems -gt 0) {
+            $report.RecycleBin.Alert = "[WARNING] Found $totalItems file(s) in Recycle Bin ($totalSizeMB MB)"
+            $report.RecycleBin.Recommendation = "Consider emptying Recycle Bin to free up $($totalSizeGB) GB of disk space"
+            
+            # Tampilkan notifikasi di console
+            Add-Type -AssemblyName System.Windows.Forms
+            $notification = New-Object System.Windows.Forms.NotifyIcon
+            $notification.Icon = [System.Drawing.SystemIcons]::Information
+            $notification.BalloonTipIcon = 'Warning'
+            $notification.BalloonTipTitle = "Recycle Bin Alert"
+            $notification.BalloonTipText = "Found $totalItems unused file(s) ($totalSizeGB GB). Consider deleting to free up disk space."
+            $notification.Visible = $true
+            $notification.ShowBalloonTip(5000)
+            
+            # Cleanup notification after display
+            Start-Sleep -Seconds 6
+            $notification.Dispose()
+        } else {
+            $report.RecycleBin.Alert = "[OK] Recycle Bin is empty"
         }
     } catch {
         $report.RecycleBin = "Check skipped: $($_.Exception.Message)"

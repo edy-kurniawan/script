@@ -5,11 +5,11 @@
 # Support: Windows 7, 8, 8.1, 10, 11
 
 param(
-    [string]$CloudUrl = "https://raw.githubusercontent.com/your-repo/maintenance-scripts/main/script.ps1",
+    [string]$CloudUrl = "https://raw.githubusercontent.com/edy-kurniawan/script/refs/heads/main/script.ps1",
     # Atau gunakan server sendiri: "http://192.168.72.27/scripts/script.ps1"
-    [string]$LocalPath = "C:\MaintenanceScripts",
-    [string]$ScriptName = "maintenance.ps1",
-    [switch]$AutoRun = $false,
+    [string]$LocalPath = "C:\Script\",
+    [string]$ScriptName = "script.ps1",
+    [switch]$AutoRun = $true,
     [switch]$ForceDownload = $false,
     [int]$RetryCount = 3
 )
@@ -113,10 +113,26 @@ while ($Attempt -lt $RetryCount -and -not $DownloadSuccess) {
             throw "Downloaded content is empty"
         }
         
+        Write-Host "[DEBUG] Downloaded $($scriptContent.Length) bytes" -ForegroundColor Gray
+        
         # Validasi script (cek apakah file valid PowerShell)
-        if ($scriptContent -notmatch "^#.*PowerShell|^\s*\$|^function|^param") {
+        # Cek apakah bukan HTML error page
+        if ($scriptContent -match '<!DOCTYPE|<html|<head|<body') {
+            Write-Host "[ERROR] Downloaded content appears to be HTML, not PowerShell" -ForegroundColor Red
+            Write-Host "[DEBUG] First 200 chars: $($scriptContent.Substring(0, [Math]::Min(200, $scriptContent.Length)))" -ForegroundColor Gray
+            throw "Downloaded file is HTML (possibly 404 page), not a PowerShell script"
+        }
+        
+        # Validasi lebih fleksibel - cek apakah mengandung syntax PowerShell
+        $hasPowerShellSyntax = $scriptContent -match '\$\w+|Get-|Set-|Write-Host|function\s+\w+|param\s*\(|#\s*=+'
+        
+        if (-not $hasPowerShellSyntax) {
+            Write-Host "[ERROR] Downloaded content does not contain PowerShell syntax" -ForegroundColor Red
+            Write-Host "[DEBUG] First 500 chars: $($scriptContent.Substring(0, [Math]::Min(500, $scriptContent.Length)))" -ForegroundColor Gray
             throw "Downloaded file is not a valid PowerShell script"
         }
+        
+        Write-Host "[OK] PowerShell script validated" -ForegroundColor Green
         
         # Hitung hash untuk versi tracking
         $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
