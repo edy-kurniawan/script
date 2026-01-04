@@ -6,8 +6,7 @@
 
 param(
     [string]$CloudUrl = "https://raw.githubusercontent.com/edy-kurniawan/script/refs/heads/main/script.ps1",
-    # Atau gunakan server sendiri: "http://192.168.72.27/scripts/script.ps1"
-    [string]$LocalPath = "C:\Script\",
+    [string]$LocalPath = "C:\script\",
     [string]$ScriptName = "script.ps1",
     [switch]$AutoRun = $true,
     [switch]$ForceDownload = $false,
@@ -234,34 +233,3 @@ Write-Host "========================================" -ForegroundColor $ColorInf
 Write-Host "Script location: $LocalScriptPath" -ForegroundColor $ColorInfo
 Write-Host "Last sync: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor $ColorInfo
 Write-Host ""
-
-# =============================
-# CARA PENGGUNAAN:
-# =============================
-# 1. Download script dari GitHub/server:
-#    .\sync-cloud.ps1 -CloudUrl "https://raw.githubusercontent.com/your-repo/script.ps1"
-#
-# 2. Download dari server LAN:
-#    .\sync-cloud.ps1 -CloudUrl "http://192.168.72.27/scripts/script.ps1"
-#
-# 3. Download dan langsung jalankan:
-#    .\sync-cloud.ps1 -CloudUrl "http://yourserver.com/script.ps1" -AutoRun
-#
-# 4. Force download (abaikan cek versi):
-#    .\sync-cloud.ps1 -ForceDownload
-#
-# 5. Custom folder tujuan:
-#    .\sync-cloud.ps1 -LocalPath "D:\Scripts" -ScriptName "maintenance.ps1"
-#
-# 6. Set retry count:
-#    .\sync-cloud.ps1 -RetryCount 5
-#
-# =============================
-# SCHEDULE OTOMATIS (TASK SCHEDULER):
-# =============================
-# Buat scheduled task untuk auto-sync setiap hari:
-#
-# schtasks /create /tn "Maintenance Script Sync" /tr "powershell.exe -ExecutionPolicy Bypass -File 'C:\Scripts\sync-cloud.ps1' -CloudUrl 'http://yourserver.com/script.ps1'" /sc daily /st 02:00
-#
-# Atau buat task yang sync + auto-run:
-# schtasks /create /tn "Maintenance Daily Run" /tr "powershell.exe -ExecutionPolicy Bypass -File 'C:\Scripts\sync-cloud.ps1' -CloudUrl 'http://yourserver.com/script.ps1' -AutoRun" /sc daily /st 02:00

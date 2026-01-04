@@ -1,0 +1,63 @@
+﻿# Wrapper untuk sync-cloud.ps1 dengan monthly execution check
+$CloudUrl = "https://raw.githubusercontent.com/edy-kurniawan/script/refs/heads/main/script.ps1"
+$ScriptPath = "C:\script\sync-cloud.ps1"
+$LogDir = "C:\script\Logs"
+$SuccessFlagDir = "C:\script\Flags"
+
+# Buat folder jika belum ada
+if (-not (Test-Path $LogDir)) { New-Item -Path $LogDir -ItemType Directory -Force | Out-Null }
+if (-not (Test-Path $SuccessFlagDir)) { New-Item -Path $SuccessFlagDir -ItemType Directory -Force | Out-Null }
+
+# File flag untuk bulan ini (format: sync_success_YYYY_MM.flag)
+$CurrentMonth = (Get-Date).ToString("yyyy_MM")
+$SuccessFlag = Join-Path $SuccessFlagDir "sync_success_$CurrentMonth.flag"
+$LogFile = Join-Path $LogDir "sync_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+
+# Cek apakah sudah sukses bulan ini
+if (Test-Path $SuccessFlag) {
+    $flagData = Get-Content $SuccessFlag -Raw | ConvertFrom-Json
+    Write-Host "[SKIP] Script sudah berhasil dijalankan bulan ini" -ForegroundColor Green
+    Write-Host "  Tanggal: $($flagData.Date)" -ForegroundColor Gray
+    Write-Host "  Hostname: $($flagData.Hostname)" -ForegroundColor Gray
+    "Script already executed this month at $($flagData.Date)" | Out-File $LogFile
+    exit 0
+}
+
+# Log start
+"[$(Get-Date)] Starting sync-cloud.ps1..." | Out-File $LogFile
+
+try {
+    # Jalankan sync-cloud.ps1 dengan AutoRun
+    & powershell.exe -ExecutionPolicy Bypass -File $ScriptPath -CloudUrl $CloudUrl -AutoRun *>&1 | Tee-Object -FilePath $LogFile -Append
+    
+    $exitCode = $LASTEXITCODE
+    
+    if ($exitCode -eq 0 -or $null -eq $exitCode) {
+        # Sukses - buat flag file
+        $flagData = @{
+            Date = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+            Hostname = $env:COMPUTERNAME
+            User = $env:USERNAME
+            ExitCode = $exitCode
+        }
+        $flagData | ConvertTo-Json | Out-File $SuccessFlag -Encoding UTF8
+        
+        Write-Host "[SUCCESS] Script berhasil dijalankan dan flag disimpan" -ForegroundColor Green
+        "[$(Get-Date)] SUCCESS - Flag created" | Out-File $LogFile -Append
+        
+        # Cleanup old flags (hapus flag > 3 bulan)
+        Get-ChildItem $SuccessFlagDir -Filter "sync_success_*.flag" | 
+            Where-Object { $_.LastWriteTime -lt (Get-Date).AddMonths(-3) } | 
+            Remove-Item -Force
+        
+        exit 0
+    } else {
+        Write-Host "[ERROR] Script gagal dengan exit code: $exitCode" -ForegroundColor Red
+        "[$(Get-Date)] FAILED - Exit code: $exitCode" | Out-File $LogFile -Append
+        exit $exitCode
+    }
+} catch {
+    Write-Host "[ERROR] Exception: $($_.Exception.Message)" -ForegroundColor Red
+    "[$(Get-Date)] ERROR: $($_.Exception.Message)" | Out-File $LogFile -Append
+    exit 1
+}
