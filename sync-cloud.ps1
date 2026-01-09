@@ -22,6 +22,13 @@ $ColorError = "Red"
 Write-Host "`n========================================" -ForegroundColor $ColorInfo
 Write-Host "  MAINTENANCE SCRIPT CLOUD SYNC" -ForegroundColor $ColorInfo
 Write-Host "========================================" -ForegroundColor $ColorInfo
+Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Gray
+
+# Deteksi PowerShell version untuk fitur JSON
+$UseJson = $PSVersionTable.PSVersion.Major -ge 3
+if (-not $UseJson) {
+    Write-Host "[INFO] Using PowerShell 2.0 compatibility mode (text format)" -ForegroundColor Yellow
+}
 
 # ===================================================
 # 1. CEK & BUAT FOLDER LOKAL
@@ -58,10 +65,22 @@ if (Test-Path $LocalScriptPath) {
     # Baca versi dari file version.txt
     if (Test-Path $VersionFile) {
         try {
-            $versionData = Get-Content $VersionFile -Raw | ConvertFrom-Json
-            $LocalVersion = $versionData.Version
-            $LocalHash = $versionData.Hash
-            $LocalDate = $versionData.Date
+            if ($UseJson) {
+                # PowerShell 3.0+ - gunakan JSON
+                $versionContent = Get-Content $VersionFile | Out-String
+                $versionData = $versionContent | ConvertFrom-Json
+                $LocalVersion = $versionData.Version
+                $LocalHash = $versionData.Hash
+                $LocalDate = $versionData.Date
+            } else {
+                # PowerShell 2.0 - gunakan format text
+                $versionLines = Get-Content $VersionFile
+                foreach ($line in $versionLines) {
+                    if ($line -match '^Version=(.+)$') { $LocalVersion = $matches[1] }
+                    if ($line -match '^Hash=(.+)$') { $LocalHash = $matches[1] }
+                    if ($line -match '^Date=(.+)$') { $LocalDate = $matches[1] }
+                }
+            }
             
             Write-Host "[INFO] Current version: $LocalVersion" -ForegroundColor $ColorInfo
             Write-Host "[INFO] Last updated: $LocalDate" -ForegroundColor $ColorInfo
@@ -108,7 +127,8 @@ while ($Attempt -lt $RetryCount -and -not $DownloadSuccess) {
         
         $scriptContent = $webClient.DownloadString($CloudUrl)
         
-        if ([string]::IsNullOrWhiteSpace($scriptContent)) {
+        # PS 2.0 compatible - gunakan IsNullOrEmpty
+        if ([string]::IsNullOrEmpty($scriptContent) -or $scriptContent.Trim() -eq "") {
             throw "Downloaded content is empty"
         }
         
@@ -133,10 +153,18 @@ while ($Attempt -lt $RetryCount -and -not $DownloadSuccess) {
         
         Write-Host "[OK] PowerShell script validated" -ForegroundColor Green
         
-        # Hitung hash untuk versi tracking
-        $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
-        $hashBytes = $hashAlgorithm.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($scriptContent))
-        $NewHash = [System.BitConverter]::ToString($hashBytes).Replace("-","")
+        # Hitung hash untuk versi tracking (PS 2.0 compatible)
+        if ($UseJson) {
+            # PowerShell 3.0+ - gunakan SHA256
+            $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+            $hashBytes = $hashAlgorithm.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($scriptContent))
+            $NewHash = [System.BitConverter]::ToString($hashBytes).Replace("-","")
+        } else {
+            # PowerShell 2.0 - gunakan MD5 (lebih sederhana)
+            $hashAlgorithm = [System.Security.Cryptography.MD5]::Create()
+            $hashBytes = $hashAlgorithm.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($scriptContent))
+            $NewHash = [System.BitConverter]::ToString($hashBytes).Replace("-","")
+        }
         
         # Cek apakah ada perubahan
         if ($LocalHash -eq $NewHash -and -not $ForceDownload) {
@@ -149,19 +177,36 @@ while ($Attempt -lt $RetryCount -and -not $DownloadSuccess) {
         $scriptContent | Out-File -FilePath $LocalScriptPath -Encoding UTF8 -Force
         
         # Simpan versi info
-        $versionInfo = @{
-            Version = "Auto-Sync-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            Hash = $NewHash
-            Date = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            Source = $CloudUrl
-            DownloadedBy = $env:COMPUTERNAME
-        }
+        $currentDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $versionString = "Auto-Sync-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
         
-        $versionInfo | ConvertTo-Json | Out-File -FilePath $VersionFile -Encoding UTF8 -Force
+        if ($UseJson) {
+            # PowerShell 3.0+ - gunakan JSON
+            $versionInfo = @{
+                Version = $versionString
+                Hash = $NewHash
+                Date = $currentDate
+                Source = $CloudUrl
+                DownloadedBy = $env:COMPUTERNAME
+                PSVersion = $PSVersionTable.PSVersion.ToString()
+            }
+            $versionInfo | ConvertTo-Json | Out-File -FilePath $VersionFile -Encoding UTF8 -Force
+        } else {
+            # PowerShell 2.0 - gunakan format text
+            $versionText = @"
+Version=$versionString
+Hash=$NewHash
+Date=$currentDate
+Source=$CloudUrl
+DownloadedBy=$env:COMPUTERNAME
+PSVersion=$($PSVersionTable.PSVersion)
+"@
+            $versionText | Out-File -FilePath $VersionFile -Encoding UTF8 -Force
+        }
         
         Write-Host "[OK] Script downloaded successfully!" -ForegroundColor $ColorSuccess
         Write-Host "[OK] Saved to: $LocalScriptPath" -ForegroundColor $ColorSuccess
-        Write-Host "[INFO] New version: $($versionInfo.Version)" -ForegroundColor $ColorInfo
+        Write-Host "[INFO] New version: $versionString" -ForegroundColor $ColorInfo
         Write-Host "[INFO] Hash: $($NewHash.Substring(0,16))..." -ForegroundColor Gray
         
         $DownloadSuccess = $true

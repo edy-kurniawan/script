@@ -8,12 +8,18 @@
 # =============================
 # CHECK POWERSHELL VERSION
 # =============================
-if ($PSVersionTable.PSVersion.Major -lt 3) {
-    Write-Host "[FATAL] PowerShell 3.0 atau lebih baru diperlukan" -ForegroundColor Red
+if ($PSVersionTable.PSVersion.Major -lt 2) {
+    Write-Host "[FATAL] PowerShell 2.0 atau lebih baru diperlukan" -ForegroundColor Red
     Write-Host "Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Yellow
-    Write-Host "Windows 7 users: Install Windows Management Framework 5.1" -ForegroundColor Yellow
-    Write-Host "Download: https://www.microsoft.com/download/details.aspx?id=54616" -ForegroundColor Cyan
     exit 1
+}
+
+# Peringatan untuk Windows 7 default PowerShell
+if ($PSVersionTable.PSVersion.Major -eq 2) {
+    Write-Host "[WARNING] Menggunakan PowerShell 2.0 (Windows 7 default)" -ForegroundColor Yellow
+    Write-Host "Script akan menggunakan fallback untuk kompatibilitas" -ForegroundColor Yellow
+    Write-Host "Disarankan upgrade ke WMF 5.1 jika memungkinkan" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 # =============================
@@ -59,11 +65,18 @@ if (-not (Test-Path `$SuccessFlagDir)) { New-Item -Path `$SuccessFlagDir -ItemTy
 
 # Cek apakah sudah sukses bulan ini
 if (Test-Path `$SuccessFlag) {
-    `$flagData = Get-Content `$SuccessFlag -Raw | ConvertFrom-Json
+    # PS 2.0 compatible - baca file text
+    `$flagLines = Get-Content `$SuccessFlag
+    `$flagDate = ""
+    `$flagHost = ""
+    foreach (`$line in `$flagLines) {
+        if (`$line -match '^Date=(.+)$') { `$flagDate = `$matches[1] }
+        if (`$line -match '^Hostname=(.+)$') { `$flagHost = `$matches[1] }
+    }
     Write-Host "[SKIP] Script sudah berhasil dijalankan bulan ini" -ForegroundColor Green
-    Write-Host "  Tanggal: `$(`$flagData.Date)" -ForegroundColor Gray
-    Write-Host "  Hostname: `$(`$flagData.Hostname)" -ForegroundColor Gray
-    "Script already executed this month at `$(`$flagData.Date)" | Out-File `$LogFile
+    Write-Host "  Tanggal: `$flagDate" -ForegroundColor Gray
+    Write-Host "  Hostname: `$flagHost" -ForegroundColor Gray
+    "Script already executed this month at `$flagDate" | Out-File `$LogFile
     exit 0
 }
 
@@ -77,14 +90,14 @@ try {
     `$exitCode = `$LASTEXITCODE
     
     if (`$exitCode -eq 0 -or `$null -eq `$exitCode) {
-        # Sukses - buat flag file
-        `$flagData = @{
-            Date = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            Hostname = `$env:COMPUTERNAME
-            User = `$env:USERNAME
-            ExitCode = `$exitCode
-        }
-        `$flagData | ConvertTo-Json | Out-File `$SuccessFlag -Encoding UTF8
+        # Sukses - buat flag file (PS 2.0 compatible - text format)
+        `$flagText = @"
+Date=(Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+Hostname=`$env:COMPUTERNAME
+User=`$env:USERNAME
+ExitCode=`$exitCode
+"@
+        `$flagText | Out-File `$SuccessFlag -Encoding UTF8
         
         Write-Host "[SUCCESS] Script berhasil dijalankan dan flag disimpan" -ForegroundColor Green
         "[`$(Get-Date)] SUCCESS - Flag created" | Out-File `$LogFile -Append
