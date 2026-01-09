@@ -22,11 +22,8 @@
 # Buka PowerShell sebagai Administrator
 # (Klik kanan Start Menu → Windows PowerShell (Admin))
 
-# Masuk ke folder script
-cd C:\script
-
 # Jalankan script untuk membuat scheduled task
-.\create-sync-task.ps1
+powershell.exe -ExecutionPolicy Bypass -File "C:\script\create-sync-task.ps1"
 ```
 
 ### 3. Verifikasi Task Berhasil Dibuat
