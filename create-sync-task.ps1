@@ -91,12 +91,10 @@ try {
     
     if (`$exitCode -eq 0 -or `$null -eq `$exitCode) {
         # Sukses - buat flag file (PS 2.0 compatible - text format)
-        `$flagText = @"
-Date=(Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-Hostname=`$env:COMPUTERNAME
-User=`$env:USERNAME
-ExitCode=`$exitCode
-"@
+        `$flagText = "Date=" + (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") + "````n"
+        `$flagText += "Hostname=" + `$env:COMPUTERNAME + "````n"
+        `$flagText += "User=" + `$env:USERNAME + "````n"
+        `$flagText += "ExitCode=" + `$exitCode
         `$flagText | Out-File `$SuccessFlag -Encoding UTF8
         
         Write-Host "[SUCCESS] Script berhasil dijalankan dan flag disimpan" -ForegroundColor Green
