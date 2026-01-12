@@ -5,6 +5,44 @@
 # Execution: Async/Background (Non-blocking)
 
 # ===================================================
+# POWERSHELL 2.0 COMPATIBILITY FUNCTIONS
+# ===================================================
+
+# ConvertTo-Json for PowerShell 2.0 (not available natively)
+if (-not (Get-Command ConvertTo-Json -ErrorAction SilentlyContinue)) {
+    function ConvertTo-Json {
+        param(
+            [Parameter(ValueFromPipeline=$true)]
+            $InputObject,
+            [int]$Depth = 2,
+            [switch]$Compress
+        )
+        
+        # Load .NET JavaScriptSerializer
+        Add-Type -AssemblyName System.Web.Extensions
+        $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+        $serializer.MaxJsonLength = 104857600 # 100MB
+        $serializer.RecursionLimit = 100
+        
+        try {
+            $json = $serializer.Serialize($InputObject)
+            
+            if (-not $Compress) {
+                # Simple pretty-print for readability
+                $json = $json -replace '(\{|\[)',"`$1`n" -replace '(\}|\])',"`n`$1" -replace ',',",`n"
+            }
+            
+            return $json
+        } catch {
+            Write-Host "[ERROR] JSON serialization failed: $($_.Exception.Message)" -ForegroundColor Red
+            return $null
+        }
+    }
+    
+    Write-Host "[COMPAT] Using custom ConvertTo-Json for PowerShell 2.0" -ForegroundColor Yellow
+}
+
+# ===================================================
 # LOAD CONFIGURATION FROM .ENV FILE
 # ===================================================
 
@@ -991,7 +1029,8 @@ foreach ($job in $BackgroundJobs) {
         
         if ($completed) {
             # Job selesai dalam timeout
-            $result = Receive-Job -Job $job.Job -Wait -AutoRemoveJob
+            $result = Receive-Job -Job $job.Job
+            Remove-Job -Job $job.Job -Force -ErrorAction SilentlyContinue
             $elapsed = [int]$jobStopwatch.Elapsed.TotalSeconds
             Write-Host "[$($job.Type)] Completed in $elapsed seconds" -ForegroundColor Green
             

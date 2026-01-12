@@ -91,12 +91,8 @@ try {
     
     if (`$exitCode -eq 0 -or `$null -eq `$exitCode) {
         # Sukses - buat flag file (PS 2.0 compatible - text format)
-        `$flagText = @"
-Date=(Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-Hostname=`$env:COMPUTERNAME
-User=`$env:USERNAME
-ExitCode=`$exitCode
-"@
+        `$flagDate = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        `$flagText = "Date=`$flagDate``nHostname=`$env:COMPUTERNAME``nUser=`$env:USERNAME``nExitCode=`$exitCode"
         `$flagText | Out-File `$SuccessFlag -Encoding UTF8
         
         Write-Host "[SUCCESS] Script berhasil dijalankan dan flag disimpan" -ForegroundColor Green
@@ -124,11 +120,17 @@ ExitCode=`$exitCode
 $wrapperContent | Out-File -FilePath $WrapperScriptPath -Encoding UTF8 -Force
 Write-Host "[OK] Wrapper script created: $WrapperScriptPath" -ForegroundColor Green
 
-# Hapus task lama jika ada
-$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existingTask) {
+# Hapus task lama jika ada (Windows 7 compatible)
+Write-Host "[INFO] Checking for existing task..." -ForegroundColor Yellow
+$checkTask = schtasks.exe /Query /TN $TaskName 2>&1
+if ($LASTEXITCODE -eq 0) {
     Write-Host "[INFO] Removing existing task..." -ForegroundColor Yellow
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    schtasks.exe /Delete /TN $TaskName /F | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Existing task removed" -ForegroundColor Green
+    } else {
+        Write-Host "[WARNING] Failed to remove existing task, continuing..." -ForegroundColor Yellow
+    }
 }
 
 # Buat task menggunakan COM object karena PowerShell cmdlet tidak support monthly day range trigger
