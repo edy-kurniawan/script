@@ -120,39 +120,50 @@ Write-Host "Detected OS: $winVersion (Build: $($osVersion.Build))" -ForegroundCo
 # --- Initialize Background Jobs Array ---
 $BackgroundJobs = @()
 
-# --- Ambil IP Address (prioritas IP LAN privat) ---
+# --- Ambil IP Address (prioritas IP LAN privat) - PowerShell 2.0 Compatible ---
 try {
-    # Kumpulkan semua IPv4 yang bukan APIPA dan bukan loopback
-    $allIPv4 = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-        Where-Object {
-            $_.IPAddress -notmatch '^169\.254' -and
-            $_.IPAddress -ne '127.0.0.1'
+    # PowerShell 2.0 tidak punya Get-NetIPAddress, gunakan WMI
+    $allAdapters = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter "IPEnabled = True" -ErrorAction Stop
+    
+    $IPAddress = $null
+    $bestScore = 999
+    
+    foreach ($adapter in $allAdapters) {
+        if ($adapter.IPAddress) {
+            foreach ($ip in $adapter.IPAddress) {
+                # Skip IPv6, loopback, dan APIPA
+                if ($ip -match ':' -or $ip -eq '127.0.0.1' -or $ip -match '^169\.254') {
+                    continue
+                }
+                
+                # Hitung score prioritas
+                $score = 100
+                
+                # Prioritas 1: Private LAN address
+                if ($ip -match '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)') {
+                    $score = $score - 50
+                }
+                
+                # Prioritas 2: Interface name (Ethernet > Wi-Fi > lainnya)
+                $desc = $adapter.Description
+                if ($desc -match 'Ethernet') {
+                    $score = $score - 20
+                } elseif ($desc -match 'Wi-Fi|WiFi|Wireless|802\.11') {
+                    $score = $score - 10
+                }
+                
+                # Hindari virtual interfaces
+                if ($desc -match 'Virtual|VMware|Hyper-V|VPN|TAP|Bluetooth|Loopback') {
+                    $score = $score + 50
+                }
+                
+                # Ambil IP dengan score terbaik (terendah)
+                if ($score -lt $bestScore) {
+                    $bestScore = $score
+                    $IPAddress = $ip
+                }
+            }
         }
-
-    # Filter hanya private LAN (10.x, 172.16-31.x, 192.168.x)
-    $privateIPv4 = $allIPv4 | Where-Object {
-        $_.IPAddress -match '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)'
-    }
-
-    # Buang interface virtual/VPN sebisa mungkin
-    $filtered = $privateIPv4 | Where-Object {
-        $_.InterfaceAlias -notmatch 'Loopback|Virtual|VMware|Hyper-V|vEthernet|VPN|TAP|Bluetooth'
-    }
-
-    # Prioritaskan Ethernet lalu Wi-Fi
-    $preferredOrder = @('Ethernet','Wi-Fi','WiFi','LAN')
-    $sorted = $filtered | Sort-Object -Property @{
-        Expression = {
-            $idx = $preferredOrder.IndexOf($_.InterfaceAlias)
-            if ($idx -ge 0) { $idx } else { 999 }
-        }
-    }, InterfaceMetric
-
-    $IPAddress = ($sorted | Select-Object -First 1).IPAddress
-
-    # Fallback jika tidak ketemu yang private/filtered
-    if (-not $IPAddress) {
-        $IPAddress = ($allIPv4 | Select-Object -First 1).IPAddress
     }
 } catch {
     $IPAddress = $null
@@ -872,7 +883,18 @@ $BackgroundJobs += @{
 
 Write-Host "\n[ANTIVIRUS] Detecting and scanning antivirus..." -ForegroundColor Cyan
 
-$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+# PowerShell 2.0 compatible - use WMI instead of Get-CimInstance
+try {
+    if ($PSVersionTable.PSVersion.Major -ge 3) {
+        # PowerShell 3.0+ - use Get-CimInstance
+        $AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+    } else {
+        # PowerShell 2.0 - use Get-WmiObject
+        $AllAV = Get-WmiObject -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+    }
+} catch {
+    $AllAV = $null
+}
 
 # Pilih hanya 1 antivirus berdasarkan prioritas
 $SelectedAV = $null
@@ -1145,7 +1167,76 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         }
         
         # Kirim POST request ke API dengan headers
-        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
+        # PowerShell 2.0 compatible - use WebClient instead of Invoke-RestMethod
+        if ($PSVersionTable.PSVersion.Major -ge 3) {
+            # PowerShell 3.0+ - use Invoke-RestMethod
+            $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
+        } else {
+            # PowerShell 2.0 - use WebClient
+            $webClient = $null
+            try {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Encoding = [System.Text.Encoding]::UTF8
+                
+                # Add headers
+                foreach ($key in $headers.Keys) {
+                    $webClient.Headers.Add($key, $headers[$key])
+                }
+                
+                # Send POST request
+                $responseText = $webClient.UploadString($Config.API_URL, $jsonBody)
+                
+                # Parse response - use simple regex to extract values
+                # More robust pattern that handles different whitespace and quote styles
+                $successMatch = $responseText -match '"success"\s*:\s*(true|false)'
+                $isSuccess = if ($successMatch -and $matches[1] -eq 'true') { $true } else { $false }
+                
+                if ($isSuccess) {
+                    # Try to extract serverId and reportId from response
+                    # Store matches immediately to avoid overwriting
+                    $serverId = "Unknown"
+                    $reportId = "Unknown"
+                    
+                    if ($responseText -match '"serverId"\s*:\s*"([^"]+)"') {
+                        $serverId = $matches[1]
+                    }
+                    if ($responseText -match '"reportId"\s*:\s*"([^"]+)"') {
+                        $reportId = $matches[1]
+                    }
+                    
+                    # Create a simple response object
+                    $response = New-Object PSObject -Property @{
+                        success = $true
+                        data = New-Object PSObject -Property @{
+                            serverId = $serverId
+                            reportId = $reportId
+                        }
+                    }
+                } else {
+                    # Try to extract error message
+                    $errorMsg = "Unknown error from backend"
+                    if ($responseText -match '"error"\s*:\s*"([^"]+)"') {
+                        $errorMsg = $matches[1]
+                    }
+                    
+                    $response = New-Object PSObject -Property @{
+                        success = $false
+                        error = $errorMsg
+                    }
+                }
+            } catch {
+                # If WebClient fails, create error response
+                $response = New-Object PSObject -Property @{
+                    success = $false
+                    error = "WebClient error: $($_.Exception.Message)"
+                }
+            } finally {
+                # Dispose WebClient to prevent resource leaks
+                if ($webClient) {
+                    $webClient.Dispose()
+                }
+            }
+        }
         
         if ($response.success) {
             Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
