@@ -1173,6 +1173,7 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
             $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
         } else {
             # PowerShell 2.0 - use WebClient
+            $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
                 $webClient.Encoding = [System.Text.Encoding]::UTF8
