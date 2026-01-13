@@ -2,9 +2,10 @@
 
 ## Prerequisites
 - **Windows 7, 8, 8.1, 10, atau 11**
-- **PowerShell 3.0 atau lebih baru** (Recommended: 5.1)
-  - Windows 10/11: Sudah terinstall by default ✅
-  - Windows 7/8: Install [Windows Management Framework 5.1](https://www.microsoft.com/download/details.aspx?id=54616)
+- **PowerShell 2.0 atau lebih baru**
+  - Windows 7 Ultimate: PowerShell 2.0 (built-in) ✅ **SUPPORTED**
+  - Windows 10/11: PowerShell 5.1+ (built-in) ✅
+  - **Optional**: Untuk performa lebih baik di Windows 7/8, install [Windows Management Framework 5.1](https://www.microsoft.com/download/details.aspx?id=54616)
 - Akses Administrator
 
 ## Langkah Instalasi
@@ -78,17 +79,23 @@ C:\script\
 
 ## Troubleshooting
 
-### Error: "PowerShell 3.0 atau lebih baru diperlukan"
-**Solusi (Windows 7/8 only):**
-1. Download [Windows Management Framework 5.1](https://www.microsoft.com/download/details.aspx?id=54616)
-2. Install sesuai versi Windows (x64/x86)
-3. Restart komputer
-4. Jalankan ulang script
+### PowerShell 2.0 Support (Windows 7 Ultimate)
+**Script sudah kompatibel dengan PowerShell 2.0!**
+- Script akan otomatis menggunakan mode kompatibilitas
+- Tidak perlu upgrade PowerShell (optional, tapi direkomendasikan untuk performa)
 
 **Cek versi PowerShell:**
 ```powershell
 $PSVersionTable.PSVersion
 ```
+
+**Jika ingin upgrade (optional):**
+1. Download [Windows Management Framework 5.1](https://www.microsoft.com/download/details.aspx?id=54616)
+2. Install sesuai versi Windows (x64/x86)
+3. Restart komputer
+
+### Error: "PowerShell 3.0 atau lebih baru diperlukan"
+**Catatan:** Error ini tidak lagi muncul. Script sudah support PowerShell 2.0.
 
 ### Error: "Script harus dijalankan sebagai Administrator"
 **Solusi:** Buka PowerShell dengan klik kanan → **Run as Administrator**

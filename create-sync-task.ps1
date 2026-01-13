@@ -14,11 +14,11 @@ if ($PSVersionTable.PSVersion.Major -lt 2) {
     exit 1
 }
 
-# Peringatan untuk Windows 7 default PowerShell
+# Info untuk Windows 7 PowerShell 2.0
 if ($PSVersionTable.PSVersion.Major -eq 2) {
-    Write-Host "[WARNING] Menggunakan PowerShell 2.0 (Windows 7 default)" -ForegroundColor Yellow
-    Write-Host "Script akan menggunakan fallback untuk kompatibilitas" -ForegroundColor Yellow
-    Write-Host "Disarankan upgrade ke WMF 5.1 jika memungkinkan" -ForegroundColor Cyan
+    Write-Host "[INFO] Menggunakan PowerShell 2.0 (Windows 7 default)" -ForegroundColor Green
+    Write-Host "Script sudah kompatibel dengan PowerShell 2.0" -ForegroundColor Green
+    Write-Host "Upgrade ke WMF 5.1 bersifat optional (untuk performa lebih baik)" -ForegroundColor Cyan
     Write-Host ""
 }
 
