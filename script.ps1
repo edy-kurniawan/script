@@ -1158,35 +1158,62 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         # Convert report ke JSON
         $jsonBody = $Report | ConvertTo-Json -Depth 10 -Compress
         
-        # Setup headers dengan API Key
-        $headers = @{
-            "Content-Type" = "application/json"
-        }
+        # Kirim POST request ke API dengan headers (PS 2.0 compatible)
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Encoding = [System.Text.Encoding]::UTF8
         
-        # Tambahkan API Key jika ada di config
+        # Set headers
+        $webClient.Headers["Content-Type"] = "application/json"
         if ($Config.API_KEY) {
-            $headers["X-API-Key"] = $Config.API_KEY
+            $webClient.Headers["X-API-Key"] = $Config.API_KEY
             Write-Host "[AUTH] Using API Key for authentication" -ForegroundColor Gray
         } else {
             Write-Host "[WARNING] No API Key configured - request may be rejected" -ForegroundColor Yellow
         }
         
-        # Kirim POST request ke API dengan headers
-        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
-        
-        if ($response.success) {
-            Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
-            Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
-            Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
-            Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
-            $submitSuccess = $true
-        } else {
-            Write-Host "[ERROR] Backend response error: $($response.error)" -ForegroundColor Yellow
+        try {
+            $responseString = $webClient.UploadString($Config.API_URL, "POST", $jsonBody)
             
-            if ($retryCount -lt $maxRetries) {
-                $waitTime = $retryCount * 5
-                Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
-                Start-Sleep -Seconds $waitTime
+            # Parse JSON response (PS 2.0 compatible)
+            # Try to use ConvertFrom-Json if available (PS 3+), otherwise use JavaScriptSerializer
+            if (Get-Command ConvertFrom-Json -ErrorAction SilentlyContinue) {
+                $response = $responseString | ConvertFrom-Json
+            } else {
+                # PowerShell 2.0 fallback
+                Add-Type -AssemblyName System.Web.Extensions
+                $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+                $serializer.MaxJsonLength = 104857600
+                $response = $serializer.DeserializeObject($responseString)
+            }
+            
+            if ($response.success) {
+                Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
+                Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                
+                # Safe property access for PS 2.0
+                if ($response.data) {
+                    if ($response.data.serverId) {
+                        Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
+                    }
+                    if ($response.data.reportId) {
+                        Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
+                    }
+                }
+                
+                $submitSuccess = $true
+            } else {
+                $errorMsg = if ($response.error) { $response.error } else { "Unknown error" }
+                Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
+                
+                if ($retryCount -lt $maxRetries) {
+                    $waitTime = $retryCount * 5
+                    Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
+                    Start-Sleep -Seconds $waitTime
+                }
+            }
+        } finally {
+            if ($webClient) {
+                $webClient.Dispose()
             }
         }
         
