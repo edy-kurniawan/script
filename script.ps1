@@ -883,7 +883,18 @@ $BackgroundJobs += @{
 
 Write-Host "\n[ANTIVIRUS] Detecting and scanning antivirus..." -ForegroundColor Cyan
 
-$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+# PowerShell 2.0 compatible - use WMI instead of Get-CimInstance
+try {
+    if ($PSVersionTable.PSVersion.Major -ge 3) {
+        # PowerShell 3.0+ - use Get-CimInstance
+        $AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+    } else {
+        # PowerShell 2.0 - use Get-WmiObject
+        $AllAV = Get-WmiObject -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+    }
+} catch {
+    $AllAV = $null
+}
 
 # Pilih hanya 1 antivirus berdasarkan prioritas
 $SelectedAV = $null
@@ -1156,7 +1167,42 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         }
         
         # Kirim POST request ke API dengan headers
-        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
+        # PowerShell 2.0 compatible - use WebClient instead of Invoke-RestMethod
+        if ($PSVersionTable.PSVersion.Major -ge 3) {
+            # PowerShell 3.0+ - use Invoke-RestMethod
+            $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
+        } else {
+            # PowerShell 2.0 - use WebClient
+            $webClient = New-Object System.Net.WebClient
+            $webClient.Encoding = [System.Text.Encoding]::UTF8
+            
+            # Add headers
+            foreach ($key in $headers.Keys) {
+                $webClient.Headers.Add($key, $headers[$key])
+            }
+            
+            # Send POST request
+            $responseText = $webClient.UploadString($Config.API_URL, $jsonBody)
+            
+            # Parse response (simple JSON parsing for success check)
+            # Since ConvertFrom-Json is provided via custom function in PS 2.0 mode
+            # we need to parse manually or use the custom function
+            if ($responseText -match '"success"\s*:\s*true') {
+                # Create a simple response object
+                $response = New-Object PSObject -Property @{
+                    success = $true
+                    data = New-Object PSObject -Property @{
+                        serverId = "PS2.0"
+                        reportId = "PS2.0"
+                    }
+                }
+            } else {
+                $response = New-Object PSObject -Property @{
+                    success = $false
+                    error = "Unknown error from backend"
+                }
+            }
+        }
         
         if ($response.success) {
             Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
