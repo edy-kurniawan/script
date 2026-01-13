@@ -1188,8 +1188,7 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
                 
                 # Parse response - use simple regex to extract values
                 # More robust pattern that handles different whitespace and quote styles
-                $successMatch = $responseText -match '"success"\s*:\s*(true|false)'
-                $isSuccess = if ($successMatch -and $matches[1] -eq 'true') { $true } else { $false }
+                $isSuccess = ($responseText -match '"success"\s*:\s*true')
                 
                 if ($isSuccess) {
                     # Try to extract serverId and reportId from response
