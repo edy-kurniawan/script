@@ -1191,8 +1191,7 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
                 $isSuccess = ($responseText -match '"success"\s*:\s*true')
                 
                 if ($isSuccess) {
-                    # Try to extract serverId and reportId from response
-                    # Store matches immediately to avoid overwriting
+                    # Extract serverId and reportId from response
                     $serverId = "Unknown"
                     $reportId = "Unknown"
                     
