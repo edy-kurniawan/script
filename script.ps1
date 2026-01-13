@@ -1184,22 +1184,35 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
             # Send POST request
             $responseText = $webClient.UploadString($Config.API_URL, $jsonBody)
             
-            # Parse response (simple JSON parsing for success check)
-            # Since ConvertFrom-Json is provided via custom function in PS 2.0 mode
-            # we need to parse manually or use the custom function
-            if ($responseText -match '"success"\s*:\s*true') {
+            # Parse response - use simple regex to extract values
+            # More robust pattern that handles different whitespace and quote styles
+            $successMatch = $responseText -match '"success"\s*:\s*(true|false)'
+            $isSuccess = if ($successMatch -and $matches[1] -eq 'true') { $true } else { $false }
+            
+            if ($isSuccess) {
+                # Try to extract serverId and reportId from response
+                $serverIdMatch = $responseText -match '"serverId"\s*:\s*"([^"]+)"'
+                $reportIdMatch = $responseText -match '"reportId"\s*:\s*"([^"]+)"'
+                
+                $serverId = if ($serverIdMatch) { $matches[1] } else { "Unknown" }
+                $reportId = if ($reportIdMatch) { $matches[1] } else { "Unknown" }
+                
                 # Create a simple response object
                 $response = New-Object PSObject -Property @{
                     success = $true
                     data = New-Object PSObject -Property @{
-                        serverId = "PS2.0"
-                        reportId = "PS2.0"
+                        serverId = $serverId
+                        reportId = $reportId
                     }
                 }
             } else {
+                # Try to extract error message
+                $errorMatch = $responseText -match '"error"\s*:\s*"([^"]+)"'
+                $errorMsg = if ($errorMatch) { $matches[1] } else { "Unknown error from backend" }
+                
                 $response = New-Object PSObject -Property @{
                     success = $false
-                    error = "Unknown error from backend"
+                    error = $errorMsg
                 }
             }
         }
