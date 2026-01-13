@@ -1174,46 +1174,59 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         } else {
             # PowerShell 2.0 - use WebClient
             $webClient = New-Object System.Net.WebClient
-            $webClient.Encoding = [System.Text.Encoding]::UTF8
             
-            # Add headers
-            foreach ($key in $headers.Keys) {
-                $webClient.Headers.Add($key, $headers[$key])
-            }
-            
-            # Send POST request
-            $responseText = $webClient.UploadString($Config.API_URL, $jsonBody)
-            
-            # Parse response - use simple regex to extract values
-            # More robust pattern that handles different whitespace and quote styles
-            $successMatch = $responseText -match '"success"\s*:\s*(true|false)'
-            $isSuccess = if ($successMatch -and $matches[1] -eq 'true') { $true } else { $false }
-            
-            if ($isSuccess) {
-                # Try to extract serverId and reportId from response
-                $serverIdMatch = $responseText -match '"serverId"\s*:\s*"([^"]+)"'
-                $reportIdMatch = $responseText -match '"reportId"\s*:\s*"([^"]+)"'
+            try {
+                $webClient.Encoding = [System.Text.Encoding]::UTF8
                 
-                $serverId = if ($serverIdMatch) { $matches[1] } else { "Unknown" }
-                $reportId = if ($reportIdMatch) { $matches[1] } else { "Unknown" }
+                # Add headers
+                foreach ($key in $headers.Keys) {
+                    $webClient.Headers.Add($key, $headers[$key])
+                }
                 
-                # Create a simple response object
-                $response = New-Object PSObject -Property @{
-                    success = $true
-                    data = New-Object PSObject -Property @{
-                        serverId = $serverId
-                        reportId = $reportId
+                # Send POST request
+                $responseText = $webClient.UploadString($Config.API_URL, $jsonBody)
+                
+                # Parse response - use simple regex to extract values
+                # More robust pattern that handles different whitespace and quote styles
+                $successMatch = $responseText -match '"success"\s*:\s*(true|false)'
+                $isSuccess = if ($successMatch -and $matches[1] -eq 'true') { $true } else { $false }
+                
+                if ($isSuccess) {
+                    # Try to extract serverId and reportId from response
+                    # Store matches immediately to avoid overwriting
+                    $serverId = "Unknown"
+                    $reportId = "Unknown"
+                    
+                    if ($responseText -match '"serverId"\s*:\s*"([^"]+)"') {
+                        $serverId = $matches[1]
+                    }
+                    if ($responseText -match '"reportId"\s*:\s*"([^"]+)"') {
+                        $reportId = $matches[1]
+                    }
+                    
+                    # Create a simple response object
+                    $response = New-Object PSObject -Property @{
+                        success = $true
+                        data = New-Object PSObject -Property @{
+                            serverId = $serverId
+                            reportId = $reportId
+                        }
+                    }
+                } else {
+                    # Try to extract error message
+                    $errorMsg = "Unknown error from backend"
+                    if ($responseText -match '"error"\s*:\s*"([^"]+)"') {
+                        $errorMsg = $matches[1]
+                    }
+                    
+                    $response = New-Object PSObject -Property @{
+                        success = $false
+                        error = $errorMsg
                     }
                 }
-            } else {
-                # Try to extract error message
-                $errorMatch = $responseText -match '"error"\s*:\s*"([^"]+)"'
-                $errorMsg = if ($errorMatch) { $matches[1] } else { "Unknown error from backend" }
-                
-                $response = New-Object PSObject -Property @{
-                    success = $false
-                    error = $errorMsg
-                }
+            } finally {
+                # Dispose WebClient to prevent resource leaks
+                $webClient.Dispose()
             }
         }
         
