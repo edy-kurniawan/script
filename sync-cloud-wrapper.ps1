@@ -20,8 +20,12 @@ if (Test-Path $SuccessFlag) {
     $flagDate = ""
     $flagHost = ""
     foreach ($line in $flagLines) {
-        if ($line -match '^Date=(.+)$') { $flagDate = $matches[1] }
-        if ($line -match '^Hostname=(.+)$') { $flagHost = $matches[1] }
+        if ($line -match '^Date=(.+)$') { 
+            $flagDate = $matches[1] 
+        }
+        if ($line -match '^Hostname=(.+)$') { 
+            $flagHost = $matches[1] 
+        }
     }
     Write-Host "[SKIP] Script sudah berhasil dijalankan bulan ini" -ForegroundColor Green
     Write-Host "  Tanggal: $flagDate" -ForegroundColor Gray

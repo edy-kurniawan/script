@@ -1173,9 +1173,8 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
             $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
         } else {
             # PowerShell 2.0 - use WebClient
-            $webClient = New-Object System.Net.WebClient
-            
             try {
+                $webClient = New-Object System.Net.WebClient
                 $webClient.Encoding = [System.Text.Encoding]::UTF8
                 
                 # Add headers
@@ -1224,9 +1223,17 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
                         error = $errorMsg
                     }
                 }
+            } catch {
+                # If WebClient fails, create error response
+                $response = New-Object PSObject -Property @{
+                    success = $false
+                    error = "WebClient error: $($_.Exception.Message)"
+                }
             } finally {
                 # Dispose WebClient to prevent resource leaks
-                $webClient.Dispose()
+                if ($webClient) {
+                    $webClient.Dispose()
+                }
             }
         }
         
