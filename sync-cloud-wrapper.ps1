@@ -1,4 +1,9 @@
-﻿# Wrapper untuk sync-cloud.ps1 dengan monthly execution check
+﻿# =============================
+# SYNC-CLOUD WRAPPER WITH MONTHLY CHECK
+# =============================
+# Support: Windows 7 (incl. Ultimate with PowerShell 2.0), 8, 8.1, 10, 11
+# PowerShell: 2.0, 3.0, 4.0, 5.0, 5.1, 7.x (Full compatibility)
+# Wrapper untuk sync-cloud.ps1 dengan monthly execution check
 $CloudUrl = "https://raw.githubusercontent.com/edy-kurniawan/script/refs/heads/main/script.ps1"
 $ScriptPath = "C:\script\sync-cloud.ps1"
 $LogDir = "C:\script\Logs"
@@ -15,11 +20,18 @@ $LogFile = Join-Path $LogDir "sync_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
 # Cek apakah sudah sukses bulan ini
 if (Test-Path $SuccessFlag) {
-    $flagData = Get-Content $SuccessFlag -Raw | ConvertFrom-Json
+    # PS 2.0 compatible - baca file text
+    $flagLines = Get-Content $SuccessFlag
+    $flagDate = ""
+    $flagHost = ""
+    foreach ($line in $flagLines) {
+        if ($line -match '^Date=(.+)$') { $flagDate = $matches[1] }
+        if ($line -match '^Hostname=(.+)$') { $flagHost = $matches[1] }
+    }
     Write-Host "[SKIP] Script sudah berhasil dijalankan bulan ini" -ForegroundColor Green
-    Write-Host "  Tanggal: $($flagData.Date)" -ForegroundColor Gray
-    Write-Host "  Hostname: $($flagData.Hostname)" -ForegroundColor Gray
-    "Script already executed this month at $($flagData.Date)" | Out-File $LogFile
+    Write-Host "  Tanggal: $flagDate" -ForegroundColor Gray
+    Write-Host "  Hostname: $flagHost" -ForegroundColor Gray
+    "Script already executed this month at $flagDate" | Out-File $LogFile
     exit 0
 }
 
@@ -33,14 +45,10 @@ try {
     $exitCode = $LASTEXITCODE
     
     if ($exitCode -eq 0 -or $null -eq $exitCode) {
-        # Sukses - buat flag file
-        $flagData = @{
-            Date = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            Hostname = $env:COMPUTERNAME
-            User = $env:USERNAME
-            ExitCode = $exitCode
-        }
-        $flagData | ConvertTo-Json | Out-File $SuccessFlag -Encoding UTF8
+        # Sukses - buat flag file (PS 2.0 compatible - text format)
+        $flagDate = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        $flagText = "Date=$flagDate`nHostname=$env:COMPUTERNAME`nUser=$env:USERNAME`nExitCode=$exitCode"
+        $flagText | Out-File $SuccessFlag -Encoding UTF8
         
         Write-Host "[SUCCESS] Script berhasil dijalankan dan flag disimpan" -ForegroundColor Green
         "[$(Get-Date)] SUCCESS - Flag created" | Out-File $LogFile -Append

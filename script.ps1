@@ -1,7 +1,8 @@
 # =============================
 # MAINTENANCE SCRIPT ALL-IN-ONE
 # =============================
-# Support: Windows 7, 8, 8.1, 10, 11
+# Support: Windows 7 (incl. Ultimate with PowerShell 2.0), 8, 8.1, 10, 11
+# PowerShell: 2.0, 3.0, 4.0, 5.0, 5.1, 7.x (Full compatibility)
 # Execution: Async/Background (Non-blocking)
 
 # ===================================================
@@ -122,12 +123,29 @@ $BackgroundJobs = @()
 
 # --- Ambil IP Address (prioritas IP LAN privat) ---
 try {
-    # Kumpulkan semua IPv4 yang bukan APIPA dan bukan loopback
-    $allIPv4 = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-        Where-Object {
-            $_.IPAddress -notmatch '^169\.254' -and
-            $_.IPAddress -ne '127.0.0.1'
+    # PowerShell 2.0 compatible - gunakan WMI
+    $allAdapters = Get-WmiObject Win32_NetworkAdapterConfiguration -ErrorAction Stop |
+        Where-Object { $_.IPEnabled -eq $true }
+    
+    $allIPv4 = @()
+    foreach ($adapter in $allAdapters) {
+        if ($adapter.IPAddress) {
+            foreach ($ip in $adapter.IPAddress) {
+                # Filter hanya IPv4 yang bukan APIPA dan bukan loopback
+                if ($ip -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' -and 
+                    $ip -notmatch '^169\.254' -and 
+                    $ip -ne '127.0.0.1') {
+                    
+                    $allIPv4 += [PSCustomObject]@{
+                        IPAddress = $ip
+                        Description = $adapter.Description
+                        MACAddress = $adapter.MACAddress
+                        Index = $adapter.Index
+                    }
+                }
+            }
         }
+    }
 
     # Filter hanya private LAN (10.x, 172.16-31.x, 192.168.x)
     $privateIPv4 = $allIPv4 | Where-Object {
@@ -136,24 +154,32 @@ try {
 
     # Buang interface virtual/VPN sebisa mungkin
     $filtered = $privateIPv4 | Where-Object {
-        $_.InterfaceAlias -notmatch 'Loopback|Virtual|VMware|Hyper-V|vEthernet|VPN|TAP|Bluetooth'
+        $_.Description -notmatch 'Loopback|Virtual|VMware|Hyper-V|vEthernet|VPN|TAP|Bluetooth|Microsoft Virtual'
     }
 
-    # Prioritaskan Ethernet lalu Wi-Fi
-    $preferredOrder = @('Ethernet','Wi-Fi','WiFi','LAN')
-    $sorted = $filtered | Sort-Object -Property @{
-        Expression = {
-            $idx = $preferredOrder.IndexOf($_.InterfaceAlias)
-            if ($idx -ge 0) { $idx } else { 999 }
+    # Prioritaskan berdasarkan nama adapter
+    $preferredPatterns = @('Ethernet', 'LAN', 'Local Area Connection', 'Wi-Fi', 'Wireless')
+    $bestIP = $null
+    
+    foreach ($pattern in $preferredPatterns) {
+        $match = $filtered | Where-Object { $_.Description -match $pattern } | Select-Object -First 1
+        if ($match) {
+            $bestIP = $match.IPAddress
+            break
         }
-    }, InterfaceMetric
-
-    $IPAddress = ($sorted | Select-Object -First 1).IPAddress
-
-    # Fallback jika tidak ketemu yang private/filtered
-    if (-not $IPAddress) {
-        $IPAddress = ($allIPv4 | Select-Object -First 1).IPAddress
     }
+    
+    # Jika belum dapat, ambil IP private pertama
+    if (-not $bestIP -and $filtered) {
+        $bestIP = ($filtered | Select-Object -First 1).IPAddress
+    }
+    
+    # Fallback ke semua IP jika tidak ketemu yang private/filtered
+    if (-not $bestIP -and $allIPv4) {
+        $bestIP = ($allIPv4 | Select-Object -First 1).IPAddress
+    }
+    
+    $IPAddress = $bestIP
 } catch {
     $IPAddress = $null
 }
@@ -872,7 +898,8 @@ $BackgroundJobs += @{
 
 Write-Host "\n[ANTIVIRUS] Detecting and scanning antivirus..." -ForegroundColor Cyan
 
-$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+# PowerShell 2.0 compatible - gunakan Get-WmiObject
+$AllAV = Get-WmiObject -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
 
 # Pilih hanya 1 antivirus berdasarkan prioritas
 $SelectedAV = $null
