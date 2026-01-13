@@ -1178,37 +1178,95 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
             # Try to use ConvertFrom-Json if available (PS 3+), otherwise use JavaScriptSerializer
             if (Get-Command ConvertFrom-Json -ErrorAction SilentlyContinue) {
                 $response = $responseString | ConvertFrom-Json
+                
+                if ($response.success) {
+                    Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
+                    Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                    
+                    # Safe property access for PS 2.0
+                    if ($response.data) {
+                        if ($response.data.serverId) {
+                            Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
+                        }
+                        if ($response.data.reportId) {
+                            Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
+                        }
+                    }
+                    
+                    $submitSuccess = $true
+                } else {
+                    if ($response.error) {
+                        $errorMsg = $response.error
+                    } else {
+                        $errorMsg = "Unknown error"
+                    }
+                    Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        $waitTime = $retryCount * 5
+                        Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
+                        Start-Sleep -Seconds $waitTime
+                    }
+                }
             } else {
-                # PowerShell 2.0 fallback
+                # PowerShell 2.0 fallback - JavaScriptSerializer returns Dictionary/ArrayList
                 Add-Type -AssemblyName System.Web.Extensions
                 $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
                 $serializer.MaxJsonLength = 104857600
-                $response = $serializer.DeserializeObject($responseString)
-            }
-            
-            if ($response.success) {
-                Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
-                Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                $responseObj = $serializer.DeserializeObject($responseString)
                 
-                # Safe property access for PS 2.0
-                if ($response.data) {
-                    if ($response.data.serverId) {
-                        Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
-                    }
-                    if ($response.data.reportId) {
-                        Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
-                    }
+                # Access as dictionary/hashtable for PS 2.0
+                $isSuccess = $false
+                if ($responseObj -is [System.Collections.IDictionary]) {
+                    $isSuccess = $responseObj['success']
+                } elseif ($responseObj.success) {
+                    $isSuccess = $responseObj.success
                 }
                 
-                $submitSuccess = $true
-            } else {
-                $errorMsg = if ($response.error) { $response.error } else { "Unknown error" }
-                Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
-                
-                if ($retryCount -lt $maxRetries) {
-                    $waitTime = $retryCount * 5
-                    Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
-                    Start-Sleep -Seconds $waitTime
+                if ($isSuccess) {
+                    Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
+                    Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                    
+                    # Safe property access for PS 2.0 with dictionary
+                    try {
+                        if ($responseObj -is [System.Collections.IDictionary]) {
+                            if ($responseObj['data']) {
+                                $data = $responseObj['data']
+                                if ($data -is [System.Collections.IDictionary]) {
+                                    if ($data['serverId']) {
+                                        Write-Host "  Server ID: $($data['serverId'])" -ForegroundColor Cyan
+                                    }
+                                    if ($data['reportId']) {
+                                        Write-Host "  Report ID: $($data['reportId'])" -ForegroundColor Cyan
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        # Ignore errors in optional property display
+                    }
+                    
+                    $submitSuccess = $true
+                } else {
+                    # Get error message
+                    $errorMsg = "Unknown error"
+                    try {
+                        if ($responseObj -is [System.Collections.IDictionary] -and $responseObj['error']) {
+                            $errorMsg = $responseObj['error']
+                        } elseif ($responseObj.error) {
+                            $errorMsg = $responseObj.error
+                        }
+                    } catch {
+                        # Use default error message
+                    }
+                    
+                    Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        $waitTime = $retryCount * 5
+                        Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
+                        Start-Sleep -Seconds $waitTime
+                    }
                 }
             }
         } finally {
