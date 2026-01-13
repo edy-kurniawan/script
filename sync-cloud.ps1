@@ -2,7 +2,8 @@
 # SYNC MAINTENANCE SCRIPT FROM CLOUD
 # =============================
 # Download latest maintenance script dari cloud server
-# Support: Windows 7, 8, 8.1, 10, 11
+# Support: Windows 7 (incl. Ultimate with PowerShell 2.0), 8, 8.1, 10, 11
+# PowerShell: 2.0, 3.0, 4.0, 5.0, 5.1, 7.x (Full compatibility)
 
 param(
     [string]$CloudUrl = "https://raw.githubusercontent.com/edy-kurniawan/script/refs/heads/main/script.ps1",

@@ -1,7 +1,8 @@
 # =============================
 # MAINTENANCE SCRIPT ALL-IN-ONE
 # =============================
-# Support: Windows 7, 8, 8.1, 10, 11
+# Support: Windows 7 (incl. Ultimate with PowerShell 2.0), 8, 8.1, 10, 11
+# PowerShell: 2.0, 3.0, 4.0, 5.0, 5.1, 7.x (Full compatibility)
 # Execution: Async/Background (Non-blocking)
 
 # ===================================================
@@ -122,12 +123,29 @@ $BackgroundJobs = @()
 
 # --- Ambil IP Address (prioritas IP LAN privat) ---
 try {
-    # Kumpulkan semua IPv4 yang bukan APIPA dan bukan loopback
-    $allIPv4 = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-        Where-Object {
-            $_.IPAddress -notmatch '^169\.254' -and
-            $_.IPAddress -ne '127.0.0.1'
+    # PowerShell 2.0 compatible - gunakan WMI
+    $allAdapters = Get-WmiObject Win32_NetworkAdapterConfiguration -ErrorAction Stop |
+        Where-Object { $_.IPEnabled -eq $true }
+    
+    $allIPv4 = @()
+    foreach ($adapter in $allAdapters) {
+        if ($adapter.IPAddress) {
+            foreach ($ip in $adapter.IPAddress) {
+                # Filter hanya IPv4 yang bukan APIPA dan bukan loopback
+                if ($ip -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' -and 
+                    $ip -notmatch '^169\.254' -and 
+                    $ip -ne '127.0.0.1') {
+                    
+                    $allIPv4 += [PSCustomObject]@{
+                        IPAddress = $ip
+                        Description = $adapter.Description
+                        MACAddress = $adapter.MACAddress
+                        Index = $adapter.Index
+                    }
+                }
+            }
         }
+    }
 
     # Filter hanya private LAN (10.x, 172.16-31.x, 192.168.x)
     $privateIPv4 = $allIPv4 | Where-Object {
@@ -136,24 +154,32 @@ try {
 
     # Buang interface virtual/VPN sebisa mungkin
     $filtered = $privateIPv4 | Where-Object {
-        $_.InterfaceAlias -notmatch 'Loopback|Virtual|VMware|Hyper-V|vEthernet|VPN|TAP|Bluetooth'
+        $_.Description -notmatch 'Loopback|Virtual|VMware|Hyper-V|vEthernet|VPN|TAP|Bluetooth|Microsoft Virtual'
     }
 
-    # Prioritaskan Ethernet lalu Wi-Fi
-    $preferredOrder = @('Ethernet','Wi-Fi','WiFi','LAN')
-    $sorted = $filtered | Sort-Object -Property @{
-        Expression = {
-            $idx = $preferredOrder.IndexOf($_.InterfaceAlias)
-            if ($idx -ge 0) { $idx } else { 999 }
+    # Prioritaskan berdasarkan nama adapter
+    $preferredPatterns = @('Ethernet', 'LAN', 'Local Area Connection', 'Wi-Fi', 'Wireless')
+    $bestIP = $null
+    
+    foreach ($pattern in $preferredPatterns) {
+        $match = $filtered | Where-Object { $_.Description -match $pattern } | Select-Object -First 1
+        if ($match) {
+            $bestIP = $match.IPAddress
+            break
         }
-    }, InterfaceMetric
-
-    $IPAddress = ($sorted | Select-Object -First 1).IPAddress
-
-    # Fallback jika tidak ketemu yang private/filtered
-    if (-not $IPAddress) {
-        $IPAddress = ($allIPv4 | Select-Object -First 1).IPAddress
     }
+    
+    # Jika belum dapat, ambil IP private pertama
+    if (-not $bestIP -and $filtered) {
+        $bestIP = ($filtered | Select-Object -First 1).IPAddress
+    }
+    
+    # Fallback ke semua IP jika tidak ketemu yang private/filtered
+    if (-not $bestIP -and $allIPv4) {
+        $bestIP = ($allIPv4 | Select-Object -First 1).IPAddress
+    }
+    
+    $IPAddress = $bestIP
 } catch {
     $IPAddress = $null
 }
@@ -872,7 +898,8 @@ $BackgroundJobs += @{
 
 Write-Host "\n[ANTIVIRUS] Detecting and scanning antivirus..." -ForegroundColor Cyan
 
-$AllAV = Get-CimInstance -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
+# PowerShell 2.0 compatible - gunakan Get-WmiObject
+$AllAV = Get-WmiObject -Namespace root/SecurityCenter2 -Class AntiVirusProduct -ErrorAction SilentlyContinue
 
 # Pilih hanya 1 antivirus berdasarkan prioritas
 $SelectedAV = $null
@@ -1131,35 +1158,120 @@ while ($retryCount -lt $maxRetries -and -not $submitSuccess) {
         # Convert report ke JSON
         $jsonBody = $Report | ConvertTo-Json -Depth 10 -Compress
         
-        # Setup headers dengan API Key
-        $headers = @{
-            "Content-Type" = "application/json"
-        }
+        # Kirim POST request ke API dengan headers (PS 2.0 compatible)
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Encoding = [System.Text.Encoding]::UTF8
         
-        # Tambahkan API Key jika ada di config
+        # Set headers
+        $webClient.Headers["Content-Type"] = "application/json"
         if ($Config.API_KEY) {
-            $headers["X-API-Key"] = $Config.API_KEY
+            $webClient.Headers["X-API-Key"] = $Config.API_KEY
             Write-Host "[AUTH] Using API Key for authentication" -ForegroundColor Gray
         } else {
             Write-Host "[WARNING] No API Key configured - request may be rejected" -ForegroundColor Yellow
         }
         
-        # Kirim POST request ke API dengan headers
-        $response = Invoke-RestMethod -Uri $Config.API_URL -Method Post -Body $jsonBody -Headers $headers -TimeoutSec ([int]$Config.API_TIMEOUT)
-        
-        if ($response.success) {
-            Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
-            Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
-            Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
-            Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
-            $submitSuccess = $true
-        } else {
-            Write-Host "[ERROR] Backend response error: $($response.error)" -ForegroundColor Yellow
+        try {
+            $responseString = $webClient.UploadString($Config.API_URL, "POST", $jsonBody)
             
-            if ($retryCount -lt $maxRetries) {
-                $waitTime = $retryCount * 5
-                Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
-                Start-Sleep -Seconds $waitTime
+            # Parse JSON response (PS 2.0 compatible)
+            # Try to use ConvertFrom-Json if available (PS 3+), otherwise use JavaScriptSerializer
+            if (Get-Command ConvertFrom-Json -ErrorAction SilentlyContinue) {
+                $response = $responseString | ConvertFrom-Json
+                
+                if ($response.success) {
+                    Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
+                    Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                    
+                    # Safe property access for PS 2.0
+                    if ($response.data) {
+                        if ($response.data.serverId) {
+                            Write-Host "  Server ID: $($response.data.serverId)" -ForegroundColor Cyan
+                        }
+                        if ($response.data.reportId) {
+                            Write-Host "  Report ID: $($response.data.reportId)" -ForegroundColor Cyan
+                        }
+                    }
+                    
+                    $submitSuccess = $true
+                } else {
+                    if ($response.error) {
+                        $errorMsg = $response.error
+                    } else {
+                        $errorMsg = "Unknown error"
+                    }
+                    Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        $waitTime = $retryCount * 5
+                        Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
+                        Start-Sleep -Seconds $waitTime
+                    }
+                }
+            } else {
+                # PowerShell 2.0 fallback - JavaScriptSerializer returns Dictionary/ArrayList
+                Add-Type -AssemblyName System.Web.Extensions
+                $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+                $serializer.MaxJsonLength = 104857600
+                $responseObj = $serializer.DeserializeObject($responseString)
+                
+                # Access as dictionary/hashtable for PS 2.0
+                $isSuccess = $false
+                if ($responseObj -is [System.Collections.IDictionary]) {
+                    $isSuccess = $responseObj['success']
+                } elseif ($responseObj.success) {
+                    $isSuccess = $responseObj.success
+                }
+                
+                if ($isSuccess) {
+                    Write-Host "[OK] Report berhasil dikirim ke Database Backend" -ForegroundColor Green
+                    Write-Host "  Backend: $($Config.API_URL)" -ForegroundColor Gray
+                    
+                    # Safe property access for PS 2.0 with dictionary
+                    try {
+                        if ($responseObj -is [System.Collections.IDictionary]) {
+                            if ($responseObj['data']) {
+                                $data = $responseObj['data']
+                                if ($data -is [System.Collections.IDictionary]) {
+                                    if ($data['serverId']) {
+                                        Write-Host "  Server ID: $($data['serverId'])" -ForegroundColor Cyan
+                                    }
+                                    if ($data['reportId']) {
+                                        Write-Host "  Report ID: $($data['reportId'])" -ForegroundColor Cyan
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        # Ignore errors in optional property display
+                    }
+                    
+                    $submitSuccess = $true
+                } else {
+                    # Get error message
+                    $errorMsg = "Unknown error"
+                    try {
+                        if ($responseObj -is [System.Collections.IDictionary] -and $responseObj['error']) {
+                            $errorMsg = $responseObj['error']
+                        } elseif ($responseObj.error) {
+                            $errorMsg = $responseObj.error
+                        }
+                    } catch {
+                        # Use default error message
+                    }
+                    
+                    Write-Host "[ERROR] Backend response error: $errorMsg" -ForegroundColor Yellow
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        $waitTime = $retryCount * 5
+                        Write-Host "[WAIT] Waiting $waitTime seconds before retry..." -ForegroundColor Gray
+                        Start-Sleep -Seconds $waitTime
+                    }
+                }
+            }
+        } finally {
+            if ($webClient) {
+                $webClient.Dispose()
             }
         }
         

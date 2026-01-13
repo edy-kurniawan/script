@@ -1,6 +1,8 @@
 # =============================
 # CREATE SCHEDULED TASK FOR SYNC-CLOUD
 # =============================
+# Support: Windows 7 (incl. Ultimate with PowerShell 2.0), 8, 8.1, 10, 11
+# PowerShell: 2.0, 3.0, 4.0, 5.0, 5.1, 7.x (Full compatibility)
 # Task akan jalan setiap bulan minggu pertama (hari 1-7)
 # Retry setiap hari di minggu pertama jika belum sukses (Senin-Jumat)
 # Hanya jalan 1x jika sudah sukses
